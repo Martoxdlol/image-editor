@@ -815,6 +815,7 @@ impl Session {
         doc.dirty = false;
         self.docs.push(DocState { doc, view: View::default() });
         self.active = self.docs.len() - 1;
+        self.overlays.clear();
         self.fit_view();
         self.dirty_frame();
         Ok(())

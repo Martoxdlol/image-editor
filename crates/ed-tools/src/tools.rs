@@ -899,7 +899,7 @@ impl Session {
                     dashed: true,
                 }];
             }
-            DragState::DrawShape { shape, start, cur, constrain } => {
+            DragState::DrawShape { shape: _, start: _, cur, constrain } => {
                 *cur = p;
                 *constrain = ev.mods.shift;
                 let (shape, s, mut c, con) = match self.drag.as_ref() {
@@ -967,7 +967,7 @@ impl Session {
                     }
                 }
             }
-            DragState::SelectShape { kind, start, cur, .. } => {
+            DragState::SelectShape { kind: _, start: _, cur, .. } => {
                 *cur = p;
                 let (kind, s, c) = match self.drag.as_ref() {
                     Some(DragState::SelectShape { kind, start, cur, .. }) => (*kind, *start, *cur),

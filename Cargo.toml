@@ -7,6 +7,7 @@ members = [
     "crates/ed-tools",
     "crates/ed-io",
     "crates/ed-wasm",
+    "crates/ed-cli",
 ]
 
 [workspace.package]

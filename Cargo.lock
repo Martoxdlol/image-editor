@@ -137,6 +137,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed-cli"
+version = "0.1.0"
+dependencies = [
+ "ed-core",
+ "ed-document",
+ "ed-engine",
+ "ed-io",
+ "serde_json",
+]
+
+[[package]]
 name = "ed-core"
 version = "0.1.0"
 dependencies = [

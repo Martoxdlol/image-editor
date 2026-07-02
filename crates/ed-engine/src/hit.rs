@@ -113,6 +113,11 @@ impl Engine {
                 if bx < 0.0 || by < 0.0 || bx >= bm.width as f64 || by >= bm.height as f64 {
                     return None;
                 }
+                // hit only where paint exists — a transparent paint layer
+                // must not swallow clicks meant for nodes underneath
+                if bm.get_pixel(bx as u32, by as u32)[3] < 8 {
+                    return None;
+                }
                 Some(id)
             }
             NodeKind::StrokeSet => {

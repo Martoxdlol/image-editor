@@ -30,7 +30,7 @@ pub struct Fragment {
 fn collect_deps(doc: &Document, nodes: &[&Node]) -> (Vec<PaletteEntry>, BTreeMap<String, Value>) {
     let mut palette = Vec::new();
     let mut variables = BTreeMap::new();
-    let mut want_palette = |name: &str, palette: &mut Vec<PaletteEntry>| {
+    let want_palette = |name: &str, palette: &mut Vec<PaletteEntry>| {
         if let Some(e) = doc.palette.iter().find(|e| e.name == name) {
             if !palette.iter().any(|p: &PaletteEntry| p.name == e.name) {
                 palette.push(e.clone());

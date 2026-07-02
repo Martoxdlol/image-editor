@@ -12,3 +12,5 @@ pub mod text;
 
 pub use overlay::Overlay;
 pub use render::{Engine, View};
+
+pub use tiny_skia::Pixmap;

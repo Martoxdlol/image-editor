@@ -331,9 +331,9 @@ impl Engine {
                     "mask" => {
                         // node-as-mask by alpha (spec §2.2): render the mask
                         // node's subtree and multiply alpha.
-                        if let Some(Value_node) = md.params.get("node") {
+                        if let Some(value_node) = md.params.get("node") {
                             if let ed_core::Value::Ref(ed_core::value::RefValue::Node { id: mid }) =
-                                Value_node
+                                value_node
                             {
                                 let mut mpm =
                                     Pixmap::new(canvas.width(), canvas.height()).unwrap();

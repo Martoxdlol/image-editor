@@ -7,7 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "wasm": "wasm-pack build ../crates/ed-wasm --target web --out-dir ../../app/src/wasm-pkg --release",
+    "predev": "npm run wasm:ifmissing",
+    "wasm:ifmissing": "node -e \"require('fs').existsSync('src/wasm-pkg/ed_wasm.js')||require('child_process').execSync('npm run wasm',{stdio:'inherit'})\"",
+    "prebuild": "npm run wasm:ifmissing"
   },
   "dependencies": {
     "@fontsource-variable/roboto": "^5.2.10",
