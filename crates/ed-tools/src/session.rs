@@ -36,6 +36,10 @@ pub struct Session {
     pub frame_rev: u64,
     last_state_rev: u64,
     doc_counter: u32,
+    /// Live param edit in progress (slider drag): (node, path, pre-drag
+    /// value). Previews mutate the doc directly; the commit records ONE
+    /// txn whose prev is the original — same rule as canvas drags (§3.3).
+    param_preview: Option<(NodeId, String, Value)>,
 }
 
 impl Default for Session {
@@ -67,7 +71,30 @@ impl Session {
             frame_rev: 1,
             last_state_rev: 0,
             doc_counter: 1,
+            param_preview: None,
         }
+    }
+
+    /// Commit any in-flight param preview as a single transaction. Called
+    /// before anything that reads or rewinds history (undo, tab switch).
+    fn flush_param_preview(&mut self) {
+        let Some((id, path, orig)) = self.param_preview.take() else { return };
+        let current = self.doc().node(id).and_then(|n| n.get_param(&path));
+        let Some(current) = current else { return };
+        if current == orig {
+            return;
+        }
+        // restore the original silently, then record the real txn so its
+        // stored prev is the true pre-drag value
+        self.doc_mut().preview_param(id, &path, orig);
+        let blobs = std::mem::take(&mut self.blobs);
+        let _ = self.doc_mut().apply_txn(
+            &format!("Set {path}"),
+            OpKind::ParamSet { node_id: id, path, value: current, prev: None },
+            &blobs,
+        );
+        self.blobs = blobs;
+        self.dirty_frame();
     }
 
     pub fn doc(&self) -> &Document {
@@ -160,6 +187,7 @@ impl Session {
             SwitchDoc { index } => {
                 if index < self.docs.len() {
                     self.cancel_drag();
+                    self.flush_param_preview();
                     self.active = index;
                     self.dirty_frame();
                 }
@@ -181,6 +209,7 @@ impl Session {
             }
             Undo => {
                 self.cancel_drag();
+                self.flush_param_preview();
                 let blobs = std::mem::take(&mut self.blobs);
                 self.doc_mut().undo(&blobs);
                 self.blobs = blobs;
@@ -189,6 +218,7 @@ impl Session {
             }
             Redo => {
                 self.cancel_drag();
+                self.flush_param_preview();
                 let blobs = std::mem::take(&mut self.blobs);
                 self.doc_mut().redo(&blobs);
                 self.blobs = blobs;
@@ -240,12 +270,48 @@ impl Session {
                 self.paste_clipboard(in_place)?;
                 Ok(json!(null))
             }
+            PreviewParam { node, path, value } => {
+                let id = parse_node_id(&node).ok_or("bad node id")?;
+                let value = json_to_value(&value).ok_or("bad value")?;
+                // a preview of a different param commits the previous one
+                match &self.param_preview {
+                    Some((pn, pp, _)) if *pn == id && *pp == path => {}
+                    Some(_) => self.flush_param_preview(),
+                    None => {}
+                }
+                if self.param_preview.is_none() {
+                    if let Some(orig) = self.doc().node(id).and_then(|n| n.get_param(&path)) {
+                        self.param_preview = Some((id, path.clone(), orig));
+                    }
+                }
+                self.doc_mut().preview_param(id, &path, value);
+                Ok(json!(null))
+            }
             SetParam { node, path, value } => {
                 let id = parse_node_id(&node).ok_or("bad node id")?;
                 let value = json_to_value(&value).ok_or("bad value")?;
+                // close an in-flight preview: restore the pre-drag original
+                // so this txn's recorded prev is correct
+                match self.param_preview.take() {
+                    Some((pn, pp, orig)) if pn == id && pp == path => {
+                        self.doc_mut().preview_param(id, &path, orig);
+                    }
+                    Some(other) => {
+                        self.param_preview = Some(other);
+                        self.flush_param_preview();
+                    }
+                    None => {}
+                }
+                // no-op commits (blur without change, drag back to start)
+                // must not pollute history
+                if self.doc().node(id).and_then(|n| n.get_param(&path)).as_ref() == Some(&value) {
+                    self.dirty_frame();
+                    return Ok(json!(null));
+                }
+                let label = format!("Set {path}");
                 let blobs = std::mem::take(&mut self.blobs);
                 let r = self.doc_mut().apply_txn(
-                    "Edit property",
+                    &label,
                     OpKind::ParamSet { node_id: id, path, value, prev: None },
                     &blobs,
                 );
@@ -1055,6 +1121,7 @@ enum Command {
     Cut,
     Paste { #[serde(default)] in_place: bool },
     SetParam { node: String, path: String, value: serde_json::Value },
+    PreviewParam { node: String, path: String, value: serde_json::Value },
     AddModifier { node: String, kind: String },
     RemoveModifier { node: String, id: u64 },
     ReorderModifier { node: String, id: u64, index: usize },

@@ -90,7 +90,9 @@ function ColorField({
       <input
         type="color"
         value={hex}
-        onChange={(e) => core.cmd({ cmd: 'set-param', node, path, value: e.target.value }, true)}
+        // live picking previews (no history); closing/leaving commits one txn
+        onChange={(e) => core.cmd({ cmd: 'preview-param', node, path, value: e.target.value }, true)}
+        onBlur={(e) => core.cmd({ cmd: 'set-param', node, path, value: e.target.value })}
         className="h-6 w-8 cursor-pointer rounded border bg-transparent"
       />
     </label>
@@ -127,7 +129,10 @@ function NodeProps({ props }: { props: PropsMirror }) {
           max={1}
           step={0.01}
           value={[paramNumber(p.opacity, 1)]}
-          onValueChange={([v]) => core.cmd({ cmd: 'set-param', node: id, path: 'opacity', value: v }, true)}
+          onValueChange={([v]) =>
+            core.cmd({ cmd: 'preview-param', node: id, path: 'opacity', value: v }, true)
+          }
+          onValueCommit={([v]) => core.cmd({ cmd: 'set-param', node: id, path: 'opacity', value: v })}
         />
         <span className="num w-8 text-right text-[10px]">
           {Math.round(paramNumber(p.opacity, 1) * 100)}%
@@ -188,7 +193,9 @@ function NodeProps({ props }: { props: PropsMirror }) {
           <textarea
             className="min-h-16 w-full rounded border bg-input/30 p-1.5 text-xs"
             value={paramString(p.text)}
-            onChange={(e) => core.cmd({ cmd: 'set-param', node: id, path: 'text', value: e.target.value }, true)}
+            // keystrokes preview live; one txn commits when leaving the field
+            onChange={(e) => core.cmd({ cmd: 'preview-param', node: id, path: 'text', value: e.target.value }, true)}
+            onBlur={(e) => core.cmd({ cmd: 'set-param', node: id, path: 'text', value: e.target.value })}
           />
           <div className="grid grid-cols-2 gap-1.5">
             <NumField node={id} path="font-size" value={p['font-size']} label="Sz" />
