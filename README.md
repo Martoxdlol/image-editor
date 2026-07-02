@@ -1,4 +1,4 @@
-# Image Editor — Final Design Specification (v1.0)
+# Image Editor — Final Design Specification (v1.1)
 
 A non-destructive, tree-based image editor combining the flexibility of Figma, the pixel tools of paint.net, and a parametric, non-baking document model. Standalone, offline-first, collaboration-*proof* by design (sync deferred).
 
@@ -327,7 +327,7 @@ call   := ident "(" expr ("," expr)* ")"    // whitelist: min max clamp round fl
 ### Import
 - PNG, JPEG, WebP, GIF, BMP, TIFF, SVG (**as vector tree**), PSD (best-effort layers), PDF (page → group), EXR, HDR/Radiance, AVIF/HEIC (HDR gain maps), 16-bit PNG/TIFF, RAW (basic develop).
 - Options: place at size / fit / original pixels; resample (nearest/bilinear/bicubic/Lanczos); new node vs new document; embed vs link (link = URL + hash with relink UX).
-- Clipboard paste, drag-and-drop.
+- Clipboard paste, drag-and-drop (full clipboard model: §10).
 
 ### Export
 - PNG (bit depth, indexed), JPEG (quality, chroma), WebP, SVG (vector subtree), TIFF, PDF, GIF, EXR (16/32f), AVIF/JPEG-XL with HDR metadata, PNG + gain map, native format.
@@ -337,7 +337,84 @@ call   := ident "(" expr ("," expr)* ")"    // whitelist: min max clamp round fl
 
 ---
 
-## 10. File Format (locked: zip)
+## 10. Clipboard & Copy/Paste
+
+Copy/paste follows the golden rule like everything else: React only brokers raw system-clipboard bytes; serialization, dependency resolution, and paste placement all happen in the Rust core.
+
+### 10.1 Two channels
+
+| Channel | Content | Use |
+|---|---|---|
+| Internal clipboard (core session) | Full-fidelity document fragment, zero-copy in the core worker | Copy/paste within a document and between open tabs |
+| System clipboard (OS/browser) | Fragment payload + standard fallback flavors (PNG, SVG, HTML, plain text) | Cross-project between app instances; interop with external apps |
+
+Every copy writes both. Paste reads the highest-fidelity flavor available: internal fragment → system fragment → SVG → image → text.
+
+### 10.2 Fragment format
+
+A self-contained snapshot, MIME `application/x-myed-fragment+zip`:
+
+```text
+fragment.myedclip (zip)
+├─ fragment.json   # subtree snapshot(s) — same schema as document.json
+├─ deps.json       # dependency closure: palette entries, variables, styles, components, fonts
+└─ blobs/<hash>    # tiles, images, embedded fonts (content-addressed)
+```
+
+Metadata in `fragment.json`: format version, source document id, source artboard id, selection bounds, working color space, DPI. Content-addressed blobs mean cross-project paste dedupes automatically against the target document's blob store.
+
+### 10.3 What copy captures (context-sensitive)
+
+| Context | Copy | Cut |
+|---|---|---|
+| Node selection | Subtree(s) + modifier stacks + dependency closure | + recorded delete txn |
+| Pixel selection on a `Bitmap` | Selected raster region as a Bitmap fragment | Clears region (tile deltas) |
+| Pixel selection, **Copy Merged** | Flattened composite of the visible tree within the region | — |
+| Text caret/range | Rich-text runs (internal) + HTML and plain text (system) | + text delete ops |
+| **Copy Style** | Fill/stroke/text/effect params of the selection | — |
+| **Copy Modifiers** | The selection's modifier stack | — |
+
+Duplicate (Ctrl+D) = copy + paste-in-place as a single txn, without touching either clipboard.
+
+### 10.4 Paste semantics
+
+- **Paste:** into the active artboard/group at viewport center; if the source location is visible in the same document, paste at source position + (10, 10) offset.
+- **Paste in Place:** exact source coordinates (same or different artboard).
+- **Paste Into:** as child of the selected group/layer; with an active selection, pasted content gets the selection as a mask.
+- **Paste as New Artboard** / **Paste as New Document**.
+- **Paste Style / Paste Modifiers** applies onto the current selection.
+- Raster fragment pasted while painting on a `Bitmap` → floating pasted selection (movable before commit), committed as tile deltas on deselect; in any other context it becomes a new `Bitmap` node.
+- Every paste is **one transaction of ordinary ops** (`NodeCreate`, `ModifierAttach`, `ParamSet`, `AssetAdd`, `PaintTilePatch`) — no new op kinds, fully undoable, collab-safe. All pasted nodes receive fresh ids; fractional indexes are generated at the target insertion point.
+
+### 10.5 Cross-project paste & dependency resolution
+
+Fragments carry their dependency closure; pasting into a different document resolves it:
+
+| Dependency | Resolution |
+|---|---|
+| Palette entry / style / variable / component | Match by stable global id, then content hash: identical → reuse target's; absent → import into target globals (tagged "Imported"); same name but different content → import under a suffixed name (`accent (2)`) |
+| Fonts | Embedded font blobs copied into target document blobs |
+| Expressions referencing variables | Stay bound if the variable resolves after the step above; otherwise the variable is imported too — a paste never silently breaks a binding |
+| Color space | Fragment records the source working space; bitmap tiles and color values are converted to the target working space on paste (HDR values preserved, unclamped) |
+| Unknown/missing plugin node types | Preserved opaquely — same never-data-loss rule as file load |
+
+A per-paste option (with a document-level default) chooses **Keep linked** (import/reuse refs — default) vs **Flatten values** (dereference palette/variable refs to literal values).
+
+### 10.6 Platform transports
+
+- **Desktop (Tauri):** native OS clipboard; custom fragment format and all fallback flavors written together.
+- **Web:** async Clipboard API. Chromium: custom web format (`web application/x-myed-fragment`). Safari/Firefox: the fragment is persisted to an OPFS clipboard store keyed by UUID and a stub reference rides in the HTML flavor — tabs in the same browser profile recover full fidelity; external apps get the standard fallbacks. Clipboard I/O runs on the main thread (permission-gated); bytes are forwarded to the core worker.
+- **Large payloads:** above a threshold (default 64 MiB) the system clipboard carries only a stub; fragment data spills to OPFS/temp file and streams on paste.
+
+### 10.7 External interop
+
+- **Paste from outside:** any importable image format (§9) → import-on-paste with the standard placement options; SVG clipboard → vector tree; HTML/plain text → `TextBlock`; file list → batch import.
+- **Copy to outside:** flavors written simultaneously — PNG (composited at artboard resolution, background per artboard settings), SVG (vector subtrees), HTML + plain text (text nodes). The receiving app picks what it understands.
+- Plugins reach the clipboard only through the `clipboard` capability permission (§13).
+
+---
+
+## 11. File Format (locked: zip)
 
 ```text
 project.myed (zip; Zip64 enabled)
@@ -355,9 +432,9 @@ project.myed (zip; Zip64 enabled)
 
 ---
 
-## 11. System Architecture (locked)
+## 12. System Architecture (locked)
 
-### 11.1 Overview
+### 12.1 Overview
 
 ```text
 ┌────────────────────────────────────────────────┐
@@ -375,7 +452,9 @@ project.myed (zip; Zip64 enabled)
 
 **Golden rule:** React never touches document data or pixels. Commands in, delta events + lightweight read-model mirrors out (tree outline, selected props, history list).
 
-### 11.2 Rust workspace
+**Multi-document session:** the core worker hosts a `DocumentSession` registry — every open tab (§14) is a `Document` instance with its own op log, undo stack, and render state. Shared across documents: the content-addressed blob store (cross-project paste dedupes to a hash lookup), the font database, the GPU device, and one global tile-memory budget (background tabs demote aggressively: GPU → compressed → disk). Background documents pause rendering but keep autosaving. The internal clipboard (§10) lives in the session, outside any document.
+
+### 12.2 Rust workspace
 
 ```text
 crates/
@@ -393,7 +472,7 @@ crates/
 
 All crates except `ed-desktop`/`ed-cli` build for wasm. `ed-document` is what a future sync server compiles natively.
 
-### 11.3 Web (wasm64 — locked)
+### 12.3 Web (wasm64 — locked)
 
 - **Primary build:** `wasm64` (Chrome/Firefox). **Fallback build:** `wasm32` behind the same TS bridge; capability probe at load picks the module. Threads + memory64 + SharedArrayBuffer probed together; degrade gracefully.
 - Threading: main thread (React + bridge) · core worker (Rust: document + tools + engine) · rayon worker pool (SAB + wasm threads) · WebGPU device owned by core worker via transferred `OffscreenCanvas` — **pixels never cross into JS**.
@@ -402,7 +481,7 @@ All crates except `ed-desktop`/`ed-cli` build for wasm. `ed-document` is what a 
 - Persistence: OPFS working directory; open/save to disk via File System Access API (download fallback).
 - wasm64 memory budget 4–8 GiB configurable; tile spilling retained for wasm32 fallback and worst cases.
 
-### 11.4 Desktop — Tauri (locked: native wgpu + webview overlay)
+### 12.4 Desktop — Tauri (locked: native wgpu + webview overlay)
 
 - Rust core runs **natively** in the Tauri process; wgpu renders to a **native child surface positioned under the webview's canvas region**; React UI composites as transparent chrome over/around it.
 - Benefits: full native GPU perf, no wasm ceiling, zero-copy present, **real HDR swapchain output** (desktop is the HDR display target).
@@ -410,7 +489,7 @@ All crates except `ed-desktop`/`ed-cli` build for wasm. `ed-document` is what a 
 - **Linux fallback** (WebKitGTK layering flakiness): shared texture → WebGPU `<canvas>` in the webview (one copy). Both paths behind a `Presenter` trait, chosen at startup.
 - Bridge = Tauri IPC; identical generated TS API as web.
 
-### 11.5 Headless CLI
+### 12.5 Headless CLI
 
 ```bash
 ed render project.myed --artboard "Cover" --scale 2 --format png -o cover.png
@@ -423,7 +502,7 @@ Identical engine → output matches the app exactly. Also the CI test harness (g
 
 ---
 
-## 12. Plugin System
+## 13. Plugin System
 
 - **Runtime:** WASM component model — `wasmtime` on native/CLI; on web, plugin wasm modules load into their own workers (browser is the sandbox), host API bridged over messages.
 - **Capability permissions** in manifest, user-approved: `document.read`, `document.write`, `network`, `clipboard`, `ui.panel`, `filesystem.scoped`.
@@ -443,11 +522,13 @@ Identical engine → output matches the app exactly. Also the CI test harness (g
 
 ---
 
-## 13. UI Design
+## 14. UI Design
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
 │ Menu bar: File Edit View Object Select Filter Window Help    │
+├──────────────────────────────────────────────────────────────┤
+│ Document tabs: [poster.myed *][logo.myed][+]                 │
 ├──────────────────────────────────────────────────────────────┤
 │ Tool options bar (active tool params, presets dropdown)      │
 ├───┬──────────────────────────────────────────────┬───────────┤
@@ -466,6 +547,7 @@ Identical engine → output matches the app exactly. Also the CI test harness (g
 └──────────────────────────────────────────────────────────────┘
 ```
 
+- **Document tabs:** the app is multi-document — each open project is a tab in the tab strip (name + unsaved-changes dot; close on hover; middle-click closes). Drag to reorder; drag to a viewport edge for **split view** (two tab groups side by side — nodes drag-and-drop across projects, complementing clipboard transfer §10); drag out of the window → new OS window (desktop). Ctrl+Tab / Ctrl+Shift+Tab cycle tabs; Ctrl+W closes (prompt if unsaved); Ctrl+Shift+T reopens a recently closed tab (session-scoped, restored from the working directory). Tab overflow scrolls, with an all-tabs dropdown. "Multiple windows of the same document" surface as linked tabs (`name:2`) sharing one document instance.
 - **Tree/Layers panel:** artboards as top-level entries; drag reorder/reparent; per-node visibility/lock/opacity/blend + modifier badges; context menu: group, rasterize, convert, mask, duplicate, create component, "new artboard from selection".
 - **Properties panel:** context-sensitive; all params of selection + reorderable/toggleable modifier stack; numeric fields accept expressions and variable bindings; expression error badges.
 - **Color panel:** wheel/sliders (sRGB/OKLCH/HSL/hex/linear float), exposure slider, swatches, document palette, recents.
@@ -476,7 +558,7 @@ Identical engine → output matches the app exactly. Also the CI test harness (g
 
 ---
 
-## 14. Type Hierarchy Summary
+## 15. Type Hierarchy Summary
 
 ```text
 Node { id, name, visible, locked, blendMode, opacity, modifierStack }
@@ -497,24 +579,25 @@ ParamVal = literal | paletteRef | variableRef | expression
 
 ---
 
-## 15. Build Order
+## 16. Build Order
 
 1. **Skeleton:** workspace, `ed-wasm` worker bridge, React shell, wgpu clear on OffscreenCanvas; capability probe (wasm64/32, threads).
 2. **Document core:** tree + ops + undo + OPFS working dir; tree & properties panels via read-model mirrors.
 3. **Engine v1:** tile store (uniform + CPU tiles), compositor, vector rasterization, pixel-preview mode.
 4. **Tools v1:** move/transform, shapes, rect/ellipse/lasso selection, fill, eyedropper, zoom/pan.
 5. **Raster:** Bitmap nodes, brush/pencil/eraser (low-latency path), magic wand; tile spilling + mips.
-6. **Import/export SDR** (PNG/JPEG/WebP, SVG import), artboards, export slices, zip save/load, `ed-cli` + golden-image CI.
-7. **Modifiers & filters:** masks, adjustments, first filter set (CPU + WGSL).
-8. **Rich text:** full itemizer/BiDi/shaping pipeline early; exhaustive snapshot tests (mixed RTL/LTR, Indic clusters, emoji ZWJ).
-9. **HDR:** view transforms, EXR/AVIF I/O, filter linear/perceptual audit; desktop HDR swapchain.
-10. **Expressions, palettes/variables, components.**
-11. **Tauri desktop:** native presenter + Linux fallback spike, packaging.
-12. **Plugin host:** filter + script types first, dev mode with hot reload.
+6. **Import/export SDR** (PNG/JPEG/WebP, SVG import), artboards, export slices, zip save/load, **clipboard v1** (internal within-project copy/paste, image paste from OS, copy-as-PNG), `ed-cli` + golden-image CI.
+7. **Multi-document & clipboard v2:** document tabs (`DocumentSession` registry, shared blob store + global tile budget), fragment format on system-clipboard transports, cross-project paste (dependency resolution completes with step 11's globals).
+8. **Modifiers & filters:** masks, adjustments, first filter set (CPU + WGSL).
+9. **Rich text:** full itemizer/BiDi/shaping pipeline early; exhaustive snapshot tests (mixed RTL/LTR, Indic clusters, emoji ZWJ).
+10. **HDR:** view transforms, EXR/AVIF I/O, filter linear/perceptual audit; desktop HDR swapchain.
+11. **Expressions, palettes/variables, components** — including cross-project paste resolution for palette/variable/style/component refs (§10.5).
+12. **Tauri desktop:** native presenter + Linux fallback spike, packaging.
+13. **Plugin host:** filter + script types first, dev mode with hot reload.
 
 ---
 
-## 16. Deferred (schema-compatible by design)
+## 17. Deferred (schema-compatible by design)
 
 | Feature | Readiness hook already in place |
 |---|---|
@@ -524,10 +607,11 @@ ParamVal = literal | paletteRef | variableRef | expression
 | Plugin marketplace | Manifest/versioning/permissions model already defined |
 | Web HDR display | View-transform architecture ready; swap output transform when browsers ship HDR canvas |
 
-## 17. Risk Register
+## 18. Risk Register
 
-1. **Linux Tauri presenter** — layered webview over native surface; fallback path designed, needs an early spike (step 11, prototype sooner).
+1. **Linux Tauri presenter** — layered webview over native surface; fallback path designed, needs an early spike (step 12, prototype sooner).
 2. **wasm64 on Safari** — wasm32 fallback build covers it; validate threads+SAB+memory64 matrix per browser at startup.
 3. **Text subsystem size** — largest single subsystem; scheduled early with snapshot-test coverage.
 4. **Large-doc save latency** — background zip repack with atomic replace.
 5. **wgpu determinism** — CPU fallback renderer is the export ground truth; GPU/CPU parity tested in CI goldens.
+6. **Web custom clipboard formats** — arbitrary clipboard MIME types are Chromium-only; Safari/Firefox rely on the OPFS-stub path (§10.6), which only spans tabs in the same browser profile. Degradation (external paste falls back to PNG/SVG) must be surfaced clearly in UX and covered by cross-browser tests.
