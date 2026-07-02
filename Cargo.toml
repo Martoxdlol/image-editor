@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ed-core",
+    "crates/ed-document",
+    "crates/ed-engine",
+    "crates/ed-tools",
+    "crates/ed-io",
+    "crates/ed-wasm",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny-skia = "0.11"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp", "tiff"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+ed-core = { path = "crates/ed-core" }
+ed-document = { path = "crates/ed-document" }
+ed-engine = { path = "crates/ed-engine" }
+ed-tools = { path = "crates/ed-tools" }
+ed-io = { path = "crates/ed-io" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"

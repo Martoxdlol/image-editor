@@ -1,0 +1,11 @@
+[package]
+name = "ed-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+ed-core = { workspace = true }
+ed-document = { workspace = true }
+serde = { workspace = true }
+tiny-skia = { workspace = true }
