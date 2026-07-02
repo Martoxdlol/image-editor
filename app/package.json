@@ -11,6 +11,8 @@
   },
   "dependencies": {
     "@fontsource-variable/roboto": "^5.2.10",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
     "@tailwindcss/vite": "^4.3.2",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -33,6 +35,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "vitest": "^4.1.9"
   }
 }
