@@ -331,7 +331,7 @@ impl ExprAst {
                 // `.x`/`.y` on a point resolves to a number
                 if path.len() >= 2 {
                     let last = path.last().unwrap().as_str();
-                    if (last == "x" || last == "y") {
+                    if last == "x" || last == "y" {
                         if let Some(V::Point(p)) = resolve(&path[..path.len() - 1]) {
                             return Ok(V::Number(if last == "x" { p.x } else { p.y }));
                         }

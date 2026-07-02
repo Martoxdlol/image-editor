@@ -64,11 +64,15 @@ pub struct BitmapData {
     /// (spec §4.4 `Uniform`/`Absent` residency states).
     #[serde(skip)]
     pub tiles: BTreeMap<(u32, u32), Vec<u8>>,
+    /// Content stamp for render caches (spec §4.1 per-node caches keyed by
+    /// content): bumped on every pixel mutation.
+    #[serde(skip)]
+    pub rev: u64,
 }
 
 impl BitmapData {
     pub fn new(width: u32, height: u32) -> Self {
-        Self { width, height, tiles: BTreeMap::new() }
+        Self { width, height, tiles: BTreeMap::new(), rev: 0 }
     }
 
     pub fn tiles_across(&self) -> u32 {
@@ -94,6 +98,7 @@ impl BitmapData {
     }
 
     pub fn tile_mut(&mut self, tx: u32, ty: u32) -> &mut Vec<u8> {
+        self.rev += 1;
         self.tiles
             .entry((tx, ty))
             .or_insert_with(|| vec![0u8; (TILE_SIZE * TILE_SIZE * 4) as usize])

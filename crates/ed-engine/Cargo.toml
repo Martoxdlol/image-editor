@@ -9,3 +9,5 @@ ed-core = { workspace = true }
 ed-document = { workspace = true }
 serde = { workspace = true }
 tiny-skia = { workspace = true }
+ab_glyph = "0.2"
+serde_json = { workspace = true }

@@ -3,7 +3,7 @@
 //! globals (variables, palette), and transient selection state.
 
 use crate::expr::{self, ExprValue};
-use crate::node::{BitmapData, Modifier, Node, NodeKind, TILE_SIZE};
+use crate::node::{BitmapData, Node, NodeKind};
 use crate::ops::{Op, OpKind, TilePatch, Txn};
 use crate::{frac_index, selection::PixelSelection};
 use ed_core::{ActorId, BlobHash, Color, NodeId, OpId, TxnId, Value, Vec2};
@@ -454,6 +454,7 @@ impl Document {
                         }
                     }
                 }
+                bm.rev += 1;
                 Ok(kind.clone())
             }
             OpKind::StrokesSet { node_id, strokes, .. } => {
@@ -466,13 +467,14 @@ impl Document {
                 let bm = n.bitmap.as_ref().ok_or("node has no bitmap")?;
                 let (prev_width, prev_height) = (bm.width, bm.height);
                 let prev_blob = if bm.tiles.is_empty() { None } else { Some(BlobHash::of(&bm.to_rgba())) };
-                let new_bm = match blob {
+                let mut new_bm = match blob {
                     None => BitmapData::new(*width, *height),
                     Some(hash) => {
                         let data = blobs.get(*hash).ok_or_else(|| format!("missing blob {hash}"))?;
                         BitmapData::from_rgba(*width, *height, data)
                     }
                 };
+                new_bm.rev = bm.rev + 1;
                 n.bitmap = Some(new_bm);
                 Ok(OpKind::BitmapReplace {
                     node_id: *node_id,
