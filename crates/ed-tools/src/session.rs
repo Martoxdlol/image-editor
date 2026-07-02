@@ -40,6 +40,9 @@ pub struct Session {
     /// value). Previews mutate the doc directly; the commit records ONE
     /// txn whose prev is the original — same rule as canvas drags (§3.3).
     param_preview: Option<(NodeId, String, Value)>,
+    /// Node created by the last area lift — a repeated drag inside the
+    /// selection keeps moving it instead of re-cutting.
+    pub floating: Option<NodeId>,
 }
 
 impl Default for Session {
@@ -72,6 +75,7 @@ impl Session {
             last_state_rev: 0,
             doc_counter: 1,
             param_preview: None,
+            floating: None,
         }
     }
 
@@ -464,6 +468,7 @@ impl Session {
             }
             ClearPixelSelection => {
                 self.doc_mut().pixel_selection = None;
+                self.floating = None;
                 Ok(json!(null))
             }
             InvertPixelSelection => {

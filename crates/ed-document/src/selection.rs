@@ -169,6 +169,30 @@ impl PixelSelection {
         }
     }
 
+    /// The same selection translated by (dx, dy) — used when the marching
+    /// ants follow a moved region or the border itself is dragged.
+    pub fn translated(&self, dx: f64, dy: f64) -> PixelSelection {
+        let mut out = self.clone();
+        for s in &mut out.shapes {
+            match &mut s.geom {
+                SelGeom::Rect { rect } | SelGeom::Ellipse { rect } => {
+                    rect.x += dx;
+                    rect.y += dy;
+                }
+                SelGeom::Polygon { points } => {
+                    for p in points.iter_mut() {
+                        *p = *p + Vec2::new(dx, dy);
+                    }
+                }
+                SelGeom::Mask { x, y, .. } => {
+                    *x += dx.round() as i64;
+                    *y += dy.round() as i64;
+                }
+            }
+        }
+        out
+    }
+
     /// Rasterize the selection to an 8-bit coverage mask over an integer
     /// pixel region. Applies feather as a separable box blur.
     pub fn rasterize(&self, x0: i64, y0: i64, w: u32, h: u32) -> Vec<u8> {

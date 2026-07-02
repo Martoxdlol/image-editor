@@ -45,6 +45,14 @@ pub enum DragState {
         orig_strokes: Vec<(NodeId, Vec<Stroke>)>,
         orig_paths: Vec<(NodeId, String)>,
         moved: bool,
+        /// When moving a lifted area, the ants travel with it.
+        orig_selection: Option<PixelSelection>,
+    },
+    /// Dragging inside a selection with a selection tool moves the border
+    /// itself (no content change).
+    MoveSelection {
+        start: Vec2,
+        orig: PixelSelection,
     },
     ResizeNodes {
         handle: usize,
@@ -115,18 +123,27 @@ impl Session {
     pub fn cancel_drag(&mut self) {
         if self.drag.is_some() {
             // revert previews
-            if let Some(DragState::MoveNodes { origs, orig_strokes, orig_paths, .. }) = self.drag.take() {
-                for (id, key, v) in origs {
-                    self.doc_mut().preview_param(id, &key, Value::F64(v));
-                }
-                for (id, strokes) in orig_strokes {
-                    if let Some(s) = self.doc_mut().strokes_mut(id) {
-                        *s = strokes;
+            match self.drag.take() {
+                Some(DragState::MoveNodes { origs, orig_strokes, orig_paths, orig_selection, .. }) => {
+                    for (id, key, v) in origs {
+                        self.doc_mut().preview_param(id, &key, Value::F64(v));
+                    }
+                    for (id, strokes) in orig_strokes {
+                        if let Some(s) = self.doc_mut().strokes_mut(id) {
+                            *s = strokes;
+                        }
+                    }
+                    for (id, d) in orig_paths {
+                        self.doc_mut().preview_param(id, "d", Value::Str(d));
+                    }
+                    if let Some(sel) = orig_selection {
+                        self.doc_mut().pixel_selection = Some(sel);
                     }
                 }
-                for (id, d) in orig_paths {
-                    self.doc_mut().preview_param(id, "d", Value::Str(d));
+                Some(DragState::MoveSelection { orig, .. }) => {
+                    self.doc_mut().pixel_selection = Some(orig);
                 }
+                _ => {}
             }
             self.drag = None;
         }
@@ -212,6 +229,9 @@ impl Session {
                 self.drag = Some(DragState::GradientDrag { start: p, cur: p });
             }
             ToolKind::SelRect => {
+                if self.try_move_selection_border(ev, p) {
+                    return;
+                }
                 self.drag = Some(DragState::SelectShape {
                     kind: "rect",
                     start: p,
@@ -220,6 +240,9 @@ impl Session {
                 });
             }
             ToolKind::SelEllipse => {
+                if self.try_move_selection_border(ev, p) {
+                    return;
+                }
                 self.drag = Some(DragState::SelectShape {
                     kind: "ellipse",
                     start: p,
@@ -228,6 +251,9 @@ impl Session {
                 });
             }
             ToolKind::Lasso => {
+                if self.try_move_selection_border(ev, p) {
+                    return;
+                }
                 self.drag = Some(DragState::Lasso { points: vec![p], mode: combine_mode(ev.mods) });
             }
             ToolKind::Wand => self.wand_click(ev, p),
@@ -257,7 +283,15 @@ impl Session {
             .map(|s| !s.is_empty() && s.coverage(p) > 0.5)
             .unwrap_or(false)
         {
-            if let Some(float_id) = self.lift_area() {
+            // continue moving an already-floating area instead of re-cutting
+            let float_id = self
+                .floating
+                .filter(|f| {
+                    self.doc().node(*f).is_some() && self.doc().selected_nodes.contains(f)
+                })
+                .or_else(|| self.lift_area());
+            if let Some(float_id) = float_id {
+                self.floating = Some(float_id);
                 let orig = self.doc().node_position(float_id);
                 self.drag = Some(DragState::MoveNodes {
                     start: p,
@@ -268,6 +302,7 @@ impl Session {
                     orig_strokes: Vec::new(),
                     orig_paths: Vec::new(),
                     moved: false,
+                    orig_selection: self.doc().pixel_selection.clone(),
                 });
                 return;
             }
@@ -355,6 +390,7 @@ impl Session {
                     orig_strokes,
                     orig_paths,
                     moved: false,
+                    orig_selection: None,
                 });
             }
             None => {
@@ -364,6 +400,26 @@ impl Session {
                 self.drag = Some(DragState::Marquee { start: p, cur: p });
             }
         }
+    }
+
+    /// Selection tools: an unmodified drag that starts inside the active
+    /// selection moves the border itself (classic paint behavior).
+    fn try_move_selection_border(&mut self, ev: InputEvent, p: Vec2) -> bool {
+        if combine_mode(ev.mods) != CombineMode::Replace {
+            return false;
+        }
+        let inside = self
+            .doc()
+            .pixel_selection
+            .as_ref()
+            .map(|s| !s.is_empty() && s.coverage(p) > 0.5)
+            .unwrap_or(false);
+        if !inside {
+            return false;
+        }
+        let orig = self.doc().pixel_selection.clone().unwrap();
+        self.drag = Some(DragState::MoveSelection { start: p, orig });
+        true
     }
 
     fn hit_handle(&self, bounds: &Rect, ev: InputEvent) -> Option<usize> {
@@ -804,7 +860,7 @@ impl Session {
     fn pointer_move(&mut self, ev: InputEvent, p: Vec2) {
         let Some(drag) = self.drag.as_mut() else { return };
         match drag {
-            DragState::MoveNodes { start, origs, orig_strokes, orig_paths, moved } => {
+            DragState::MoveNodes { start, origs, orig_strokes, orig_paths, moved, orig_selection } => {
                 let mut delta = p - *start;
                 if ev.mods.shift {
                     // axis constrain
@@ -838,6 +894,7 @@ impl Session {
                     .iter()
                     .map(|(id, d)| (*id, offset_path_data(d, delta.x, delta.y)))
                     .collect();
+                let sel_update = orig_selection.as_ref().map(|s| s.translated(delta.x, delta.y));
                 for (id, key, v) in updates {
                     self.doc_mut().preview_param(id, &key, Value::F64(v));
                 }
@@ -849,6 +906,14 @@ impl Session {
                 for (id, d) in path_updates {
                     self.doc_mut().preview_param(id, "d", Value::Str(d));
                 }
+                if let Some(sel) = sel_update {
+                    self.doc_mut().pixel_selection = Some(sel);
+                }
+            }
+            DragState::MoveSelection { start, orig } => {
+                let delta = p - *start;
+                let moved = orig.translated(delta.x, delta.y);
+                self.doc_mut().pixel_selection = Some(moved);
             }
             DragState::ResizeNodes { handle, start_bounds, origs } => {
                 let sb = *start_bounds;
@@ -1032,7 +1097,7 @@ impl Session {
         let Some(drag) = self.drag.take() else { return };
         self.overlays.clear();
         match drag {
-            DragState::MoveNodes { origs, orig_strokes, orig_paths, moved, start } => {
+            DragState::MoveNodes { origs, orig_strokes, orig_paths, moved, start, .. } => {
                 if !moved {
                     return;
                 }
@@ -1255,6 +1320,7 @@ impl Session {
                 }
             }
             DragState::Pan { .. } => {}
+            DragState::MoveSelection { .. } => {} // border already translated
             DragState::GradientDrag { start, cur } => {
                 if start.distance(cur) > 3.0 {
                     self.create_gradient(start, cur);
@@ -1415,6 +1481,7 @@ impl Session {
                 self.cancel_drag();
                 self.doc_mut().pixel_selection = None;
                 self.doc_mut().selected_nodes.clear();
+                self.floating = None;
             }
             "Enter" => {
                 if !self.pen.points.is_empty() {

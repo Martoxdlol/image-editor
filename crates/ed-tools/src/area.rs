@@ -203,9 +203,8 @@ impl Session {
             id
         };
         self.blobs = blobs;
-        // the region moved out of the sources; the selection follows the
-        // floating object now
-        self.doc_mut().pixel_selection = None;
+        // the selection border stays and follows the floating object
+        self.floating = float_id;
         self.dirty_frame();
         float_id
     }
@@ -429,8 +428,9 @@ mod tests {
         // source has the hole
         let bm = s.doc().node(bmp).unwrap().bitmap.as_ref().unwrap();
         assert_eq!(bm.get_pixel(130, 130)[3], 0);
-        // selection consumed, floating node selected
-        assert!(!s.has_pixel_selection());
+        // the selection border stays (it travels with the floating node)
+        assert!(s.has_pixel_selection());
+        assert_eq!(s.floating, Some(float_id));
         assert_eq!(s.doc().selected_nodes, vec![float_id]);
     }
 }
