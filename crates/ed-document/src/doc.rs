@@ -195,6 +195,10 @@ impl Document {
         }
     }
 
+    pub fn open_txn_label(&self) -> Option<&str> {
+        self.open_txn.as_ref().map(|(_, label, _)| label.as_str())
+    }
+
     pub fn abort_txn(&mut self, blobs: &BlobStore) {
         if let Some((_, _, ops)) = self.open_txn.take() {
             for op in ops.iter().rev() {
@@ -685,6 +689,28 @@ impl Document {
             .get(&id)
             .map(|n| Vec2::new(self.param_f64(n, "x", 0.0), self.param_f64(n, "y", 0.0)))
             .unwrap_or(Vec2::ZERO)
+    }
+
+    /// Transient param write during a drag preview — bypasses the op log.
+    /// The owning tool must restore initial values before committing the
+    /// real txn on pointer-up (spec §3.3: one drag = one txn).
+    pub fn preview_param(&mut self, id: NodeId, path: &str, value: Value) {
+        if let Some(n) = self.nodes.get_mut(&id) {
+            n.set_param(path, value);
+            self.revision += 1;
+        }
+    }
+
+    /// Direct bitmap access for live painting (preview = real mutation;
+    /// undo comes from before-tile capture + `commit_paint`).
+    pub fn bitmap_mut(&mut self, id: NodeId) -> Option<&mut BitmapData> {
+        self.revision += 1;
+        self.nodes.get_mut(&id)?.bitmap.as_mut()
+    }
+
+    pub fn strokes_mut(&mut self, id: NodeId) -> Option<&mut Vec<crate::node::Stroke>> {
+        self.revision += 1;
+        Some(&mut self.nodes.get_mut(&id)?.strokes)
     }
 
     // ------------------------------------------------------------ loading

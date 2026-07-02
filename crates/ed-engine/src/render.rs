@@ -521,6 +521,17 @@ impl Engine {
         }
     }
 
+    /// Render one node subtree standalone (rasterize/copy-as-PNG paths).
+    pub fn render_node_standalone(
+        &mut self,
+        doc: &Document,
+        id: NodeId,
+        pm: &mut Pixmap,
+        m: &Mat3,
+    ) {
+        self.render_node(doc, id, pm, m, None, 1.0, true);
+    }
+
     // ------------------------------------------------------------ bounds & hit
 
     /// Doc-space axis-aligned bounds of a node, including transform mods.

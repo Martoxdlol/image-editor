@@ -185,8 +185,10 @@ dependencies = [
  "ed-core",
  "ed-document",
  "ed-engine",
+ "ed-io",
  "serde",
  "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]

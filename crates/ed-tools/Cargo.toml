@@ -8,5 +8,7 @@ license.workspace = true
 ed-core = { workspace = true }
 ed-document = { workspace = true }
 ed-engine = { workspace = true }
+ed-io = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tiny-skia = { workspace = true }
