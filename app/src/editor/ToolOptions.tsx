@@ -75,19 +75,24 @@ const OPTIONS: Partial<Record<ToolKind, Opt[]>> = {
   ],
   'sel-rect': [
     { kind: 'num', key: 'sel.feather', label: 'Feather', min: 0, max: 50, step: 1, def: 0 },
+    { kind: 'enum', key: 'sel.affect', label: 'Affects', values: ['all', 'selected', 'bitmaps'], def: 'all' },
   ],
   'sel-ellipse': [
     { kind: 'num', key: 'sel.feather', label: 'Feather', min: 0, max: 50, step: 1, def: 0 },
+    { kind: 'enum', key: 'sel.affect', label: 'Affects', values: ['all', 'selected', 'bitmaps'], def: 'all' },
+  ],
+  lasso: [
+    { kind: 'enum', key: 'sel.affect', label: 'Affects', values: ['all', 'selected', 'bitmaps'], def: 'all' },
   ],
 }
 
 const HINTS: Partial<Record<ToolKind, string>> = {
-  select: 'Drag to move · handles to resize · ⇧ multi-select · double-click to enter groups',
+  select: 'Drag to move · drag inside a selection to lift & move the area · ⇧ multi-select',
   pen: 'Click to add points · click the first point to close · Enter finishes · Esc cancels',
   wand: '⇧ add · ⌥ subtract',
-  'sel-rect': '⇧ add · ⌥ subtract · ⇧⌥ intersect',
-  'sel-ellipse': '⇧ add · ⌥ subtract',
-  lasso: 'Drag a freehand region',
+  'sel-rect': '⇧ add · ⌥ subtract · ⇧⌥ intersect · ⌘X cuts the area',
+  'sel-ellipse': '⇧ add · ⌥ subtract · ⌘X cuts the area',
+  lasso: 'Drag a freehand region · ⌘X cuts the area',
   zoom: 'Click to zoom in · ⌥-click out',
   eyedropper: 'Click to pick foreground · ⌥ background',
   fill: 'Click a bitmap to flood fill · click a shape to recolor',

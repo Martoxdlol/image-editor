@@ -248,6 +248,30 @@ impl Session {
     }
 
     fn select_down(&mut self, ev: InputEvent, p: Vec2) {
+        // paint-style area move: dragging inside an active pixel selection
+        // lifts the region into a floating bitmap and moves it
+        if self
+            .doc()
+            .pixel_selection
+            .as_ref()
+            .map(|s| !s.is_empty() && s.coverage(p) > 0.5)
+            .unwrap_or(false)
+        {
+            if let Some(float_id) = self.lift_area() {
+                let orig = self.doc().node_position(float_id);
+                self.drag = Some(DragState::MoveNodes {
+                    start: p,
+                    origs: vec![
+                        (float_id, "x".into(), orig.x),
+                        (float_id, "y".into(), orig.y),
+                    ],
+                    orig_strokes: Vec::new(),
+                    orig_paths: Vec::new(),
+                    moved: false,
+                });
+                return;
+            }
+        }
         // handle hit first (resize)
         let sel_bounds = self.selection_bounds_pub();
         if !self.doc().selected_nodes.is_empty() && (sel_bounds.w > 0.0 || sel_bounds.h > 0.0) {
@@ -729,7 +753,7 @@ impl Session {
         if let Some(ab) = self.engine.artboard_at(self.doc(), p) {
             if let Some(rect) = self.doc().artboard_rect(ab) {
                 let doc = &self.docs[self.active].doc;
-                if let Some(pm) = self.engine.render_artboard(doc, ab, 1.0, true) {
+                if let Some(pm) = self.engine.render_artboard(doc, &self.blobs, ab, 1.0, true) {
                     let x = (p.x - rect.x).floor() as u32;
                     let y = (p.y - rect.y).floor() as u32;
                     if x < pm.width() && y < pm.height() {
@@ -754,7 +778,7 @@ impl Session {
         let Some(ab) = self.engine.artboard_at(self.doc(), p) else { return };
         let Some(rect) = self.doc().artboard_rect(ab) else { return };
         let doc = &self.docs[self.active].doc;
-        let Some(pm) = self.engine.render_artboard(doc, ab, 1.0, true) else { return };
+        let Some(pm) = self.engine.render_artboard(doc, &self.blobs, ab, 1.0, true) else { return };
         let rgba = crate::session::demultiply(&pm);
         let sx = (p.x - rect.x).floor().max(0.0) as u32;
         let sy = (p.y - rect.y).floor().max(0.0) as u32;
@@ -1397,7 +1421,15 @@ impl Session {
                     self.finish_pen(false);
                 }
             }
-            "Delete" | "Backspace" => self.delete_selection(),
+            // area delete when a pixel selection is active (paint-style);
+            // object delete otherwise
+            "Delete" | "Backspace" => {
+                if self.has_pixel_selection() && self.area_cut(false, "Delete area") {
+                    // area cleared; keep the selection for further edits
+                } else {
+                    self.delete_selection();
+                }
+            }
             "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown" => {
                 let step = if mods.shift { 10.0 } else { 1.0 };
                 let (dx, dy) = match key {

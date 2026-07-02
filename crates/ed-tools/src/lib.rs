@@ -3,6 +3,7 @@
 //! overlay draw commands + cursor; the session hosts the multi-document
 //! registry, shared blob store, and internal clipboard.
 
+pub mod area;
 pub mod fragment;
 pub mod input;
 pub mod session;

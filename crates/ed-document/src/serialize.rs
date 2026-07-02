@@ -24,10 +24,26 @@ pub struct Snapshot {
     pub nodes: Vec<Node>,
     #[serde(default)]
     pub tiles: BTreeMap<String, Vec<TileRef>>,
+    /// Blobs referenced by `Value::Blob` params (masks etc.) — persisted
+    /// alongside tile blobs in the container (spec §3.2 content addressing).
+    #[serde(default)]
+    pub param_blobs: Vec<BlobHash>,
     #[serde(default)]
     pub variables: BTreeMap<String, Value>,
     #[serde(default)]
     pub palette: Vec<PaletteEntry>,
+}
+
+/// All `Value::Blob` references reachable from a node's params/modifiers.
+pub fn node_blob_refs(node: &Node) -> Vec<BlobHash> {
+    node.params
+        .values()
+        .chain(node.modifiers.iter().flat_map(|m| m.params.values()))
+        .filter_map(|v| match v {
+            Value::Blob(h) => Some(*h),
+            _ => None,
+        })
+        .collect()
 }
 
 impl Document {
@@ -35,11 +51,13 @@ impl Document {
     pub fn to_snapshot(&self, blobs: &mut BlobStore) -> Snapshot {
         let mut nodes = Vec::new();
         let mut tiles = BTreeMap::new();
+        let mut param_blobs = Vec::new();
         // Depth-first so parents come before children on load.
         let mut stack: Vec<NodeId> = self.children_of(None).iter().rev().copied().collect();
         while let Some(id) = stack.pop() {
             let n = &self.nodes[&id];
             nodes.push(n.clone());
+            param_blobs.extend(node_blob_refs(n));
             if let Some(bm) = &n.bitmap {
                 let refs: Vec<TileRef> = bm
                     .tiles
@@ -54,11 +72,14 @@ impl Document {
                 stack.push(c);
             }
         }
+        param_blobs.sort();
+        param_blobs.dedup();
         Snapshot {
             format: FORMAT_VERSION,
             name: self.name.clone(),
             nodes,
             tiles,
+            param_blobs,
             variables: self.variables.clone(),
             palette: self.palette.clone(),
         }

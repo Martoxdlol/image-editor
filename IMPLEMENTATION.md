@@ -58,6 +58,7 @@ cargo run -p ed-cli -- export project.myed -o out/
 | Filters: gaussian blur, pixelate, noise (seeded); adjustments: brightness/contrast, HSL, levels, invert, grayscale, posterize, threshold | ✅ |
 | Tools: select/move/resize/marquee, all shapes, pen (polyline, close-to-fill), text, brush/pencil/eraser (pressure, soft brush, paint-as-strokes mode), fill (bitmap flood + shape recolor), eyedropper (composite), gradient, rect/ellipse/lasso selects, magic wand (composite sample), pan, zoom | ✅ |
 | Pixel selections: boolean combine (replace/add/subtract/intersect), feather, invert, marching ants; constrain painting & fill | ✅ |
+| **Area cut/copy/move** (two cut semantics): with a pixel selection active, ⌘X/⌘C/Delete act on the AREA — merged region → clipboard as bitmap fragment; bitmaps lose pixels via tile deltas; vector objects get a non-destructive inverted `sel-mask` modifier (toggle/remove per object in Properties); dragging inside a selection lifts it into a floating bitmap and moves it (paint-style); "Affects" scope option (all/selected/bitmaps) | ✅ |
 | Selections as saved nodes | ❌ deferred |
 | Expressions (§8): full grammar, whitelist funcs, `$var`/`$palette.x` refs, dependency tracking; `=expr` accepted in property fields | ✅ |
 | Palettes (named colors, live refs), document variables | ✅ (`.gpl/.ase` import deferred) |

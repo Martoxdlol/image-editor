@@ -9,7 +9,7 @@ use crate::paint::{fill_paint, stroke_paint, to_sk_blend, to_sk_color};
 use crate::raster::{bitmap_to_pixmap, replay_stroke};
 use crate::shapes::{parse_path_data, shape_path};
 use ed_core::{BlobHash, Color, Mat3, NodeId, Rect, Vec2};
-use ed_document::{BitmapData, Document, Node, NodeKind, SelGeom};
+use ed_document::{doc::BlobStore, BitmapData, Document, Node, NodeKind, SelGeom};
 use std::collections::HashMap;
 use tiny_skia::{FillRule, Mask, Paint, PathBuilder, Pixmap, PixmapPaint, Transform};
 
@@ -94,9 +94,11 @@ impl Engine {
 
     /// Render the full viewport: pasteboard, artboards, shared-space nodes,
     /// selection ants and tool overlays.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         doc: &Document,
+        blobs: &BlobStore,
         view: &View,
         width: u32,
         height: u32,
@@ -118,10 +120,10 @@ impl Engine {
         for &root in doc.children_of(None) {
             let Some(node) = doc.node(root) else { continue };
             if node.kind == NodeKind::Artboard {
-                self.render_artboard_in_view(doc, root, &mut canvas, view, &viewport_doc);
+                self.render_artboard_in_view(doc, blobs, root, &mut canvas, view, &viewport_doc);
             } else {
                 // shared-space pasteboard node
-                self.render_node(doc, root, &mut canvas, &m, None, view.zoom, false);
+                self.render_node(doc, blobs, root, &mut canvas, &m, None, view.zoom, false);
             }
         }
 
@@ -149,6 +151,7 @@ impl Engine {
     fn render_artboard_in_view(
         &mut self,
         doc: &Document,
+        blobs: &BlobStore,
         id: NodeId,
         canvas: &mut Pixmap,
         view: &View,
@@ -199,7 +202,7 @@ impl Engine {
                 let mut ab_pm = Pixmap::new(ab_w, ab_h).unwrap();
                 let ab_m = Mat3::translate(Vec2::new(-rect.x, -rect.y));
                 for &c in doc.children_of(Some(id)) {
-                    self.render_node(doc, c, &mut ab_pm, &ab_m, None, 1.0, true);
+                    self.render_node(doc, blobs, c, &mut ab_pm, &ab_m, None, 1.0, true);
                 }
                 let paint = PixmapPaint {
                     quality: tiny_skia::FilterQuality::Nearest,
@@ -223,7 +226,7 @@ impl Engine {
 
         let m = view.doc_to_screen();
         for &c in doc.children_of(Some(id)) {
-            self.render_node(doc, c, canvas, &m, Some(&mask), view.zoom, false);
+            self.render_node(doc, blobs, c, canvas, &m, Some(&mask), view.zoom, false);
         }
     }
 
@@ -255,6 +258,7 @@ impl Engine {
     pub fn render_artboard(
         &mut self,
         doc: &Document,
+        blobs: &BlobStore,
         id: NodeId,
         scale: f64,
         include_background: bool,
@@ -272,7 +276,7 @@ impl Engine {
         }
         let m = Mat3::scale(scale, scale).mul(&Mat3::translate(Vec2::new(-rect.x, -rect.y)));
         for &c in doc.children_of(Some(id)) {
-            self.render_node(doc, c, &mut pm, &m, None, scale, true);
+            self.render_node(doc, blobs, c, &mut pm, &m, None, scale, true);
         }
         Some(pm)
     }
@@ -283,6 +287,7 @@ impl Engine {
     fn render_node(
         &mut self,
         doc: &Document,
+        blobs: &BlobStore,
         id: NodeId,
         canvas: &mut Pixmap,
         m: &Mat3,
@@ -305,7 +310,10 @@ impl Engine {
             .iter()
             .any(|md| md.enabled && filters::is_filter_kind(&md.kind));
         let has_clip = node.modifiers.iter().any(|md| md.enabled && md.kind == "clip");
-        let has_mask_mod = node.modifiers.iter().any(|md| md.enabled && md.kind == "mask");
+        let has_mask_mod = node
+            .modifiers
+            .iter()
+            .any(|md| md.enabled && (md.kind == "mask" || md.kind == "sel-mask"));
         let opacity = node.opacity();
         let blend = node.blend();
         let needs_layer = opacity < 0.999
@@ -316,7 +324,7 @@ impl Engine {
 
         if needs_layer {
             let mut layer = Pixmap::new(canvas.width(), canvas.height()).unwrap();
-            self.render_content(doc, node, &mut layer, &m2, None, zoom, export);
+            self.render_content(doc, blobs, node, &mut layer, &m2, None, zoom, export);
             // clip modifier: keep only pixels inside the clip shape
             for md in node.modifiers.iter().filter(|md| md.enabled) {
                 match md.kind.as_str() {
@@ -337,13 +345,37 @@ impl Engine {
                             {
                                 let mut mpm =
                                     Pixmap::new(canvas.width(), canvas.height()).unwrap();
-                                self.render_node(doc, *mid, &mut mpm, m, None, zoom, export);
+                                self.render_node(doc, blobs, *mid, &mut mpm, m, None, zoom, export);
                                 let invert = md
                                     .params
                                     .get("invert")
                                     .and_then(|v| v.as_bool())
                                     .unwrap_or(false);
                                 apply_alpha_mask(&mut layer, &mpm, invert);
+                            }
+                        }
+                    }
+                    // area-cut hole (spec §2.3 selection-as-mask): a
+                    // rasterized selection region, blob-addressed, usually
+                    // inverted so the covered area becomes transparent.
+                    "sel-mask" => {
+                        let g = |k: &str, d: f64| {
+                            md.params.get(k).map(|v| doc.resolve(v)).and_then(|v| v.as_f64()).unwrap_or(d)
+                        };
+                        let invert =
+                            md.params.get("invert").and_then(|v| v.as_bool()).unwrap_or(true);
+                        if let Some(ed_core::Value::Blob(hash)) = md.params.get("mask") {
+                            if let Some(data) = blobs.get(*hash) {
+                                apply_selection_mask(
+                                    &mut layer,
+                                    data,
+                                    g("x", 0.0),
+                                    g("y", 0.0),
+                                    g("w", 0.0).max(0.0) as u32,
+                                    g("h", 0.0).max(0.0) as u32,
+                                    &m2,
+                                    invert,
+                                );
                             }
                         }
                     }
@@ -360,7 +392,7 @@ impl Engine {
             };
             canvas.draw_pixmap(0, 0, layer.as_ref(), &paint, Transform::identity(), mask);
         } else {
-            self.render_content(doc, node, canvas, &m2, mask, zoom, export);
+            self.render_content(doc, blobs, node, canvas, &m2, mask, zoom, export);
         }
     }
 
@@ -368,6 +400,7 @@ impl Engine {
     fn render_content(
         &mut self,
         doc: &Document,
+        blobs: &BlobStore,
         node: &Node,
         canvas: &mut Pixmap,
         m: &Mat3,
@@ -380,7 +413,7 @@ impl Engine {
             NodeKind::Group | NodeKind::Layer | NodeKind::Artboard => {
                 for &c in doc.children_of(Some(node.id)) {
                     // children get the parent-composed matrix
-                    self.render_node(doc, c, canvas, m, mask, zoom, export);
+                    self.render_node(doc, blobs, c, canvas, m, mask, zoom, export);
                 }
             }
             NodeKind::Shape => {
@@ -514,7 +547,7 @@ impl Engine {
                         let dy = doc.param_f64(node, "y", 0.0);
                         let src = doc.node_position(comp);
                         let m2 = m.mul(&Mat3::translate(Vec2::new(dx - src.x, dy - src.y)));
-                        self.render_node(doc, comp, canvas, &m2, mask, zoom, export);
+                        self.render_node(doc, blobs, comp, canvas, &m2, mask, zoom, export);
                     }
                 }
             }
@@ -525,11 +558,12 @@ impl Engine {
     pub fn render_node_standalone(
         &mut self,
         doc: &Document,
+        blobs: &BlobStore,
         id: NodeId,
         pm: &mut Pixmap,
         m: &Mat3,
     ) {
-        self.render_node(doc, id, pm, m, None, 1.0, true);
+        self.render_node(doc, blobs, id, pm, m, None, 1.0, true);
     }
 
     // ------------------------------------------------------------ bounds & hit
@@ -827,6 +861,53 @@ fn apply_rect_clip(layer: &mut Pixmap, keep: &Rect) {
                 data[i..i + 4].fill(0);
             }
         }
+    }
+}
+
+/// Multiply a layer by a rasterized selection coverage mask stored as raw
+/// 8-bit doc-resolution bytes at doc rect (x, y, w, h). `invert` keeps the
+/// outside (the covered region becomes a hole).
+#[allow(clippy::too_many_arguments)]
+fn apply_selection_mask(
+    layer: &mut Pixmap,
+    mask_bytes: &[u8],
+    x: f64,
+    y: f64,
+    mw: u32,
+    mh: u32,
+    m: &Mat3,
+    invert: bool,
+) {
+    if mw == 0 || mh == 0 || mask_bytes.len() < (mw as usize) * (mh as usize) {
+        return;
+    }
+    let Some(mut mask_pm) = Pixmap::new(mw, mh) else { return };
+    {
+        let data = mask_pm.data_mut();
+        for (i, &a) in mask_bytes[..(mw as usize) * (mh as usize)].iter().enumerate() {
+            let o = i * 4;
+            data[o] = a;
+            data[o + 1] = a;
+            data[o + 2] = a;
+            data[o + 3] = a;
+        }
+    }
+    // project the doc-space mask into screen space, then multiply
+    let Some(mut scratch) = Pixmap::new(layer.width(), layer.height()) else { return };
+    let t = to_transform(&m.mul(&Mat3::translate(Vec2::new(x, y))));
+    let paint = PixmapPaint { quality: tiny_skia::FilterQuality::Bilinear, ..Default::default() };
+    scratch.draw_pixmap(0, 0, mask_pm.as_ref(), &paint, t, None);
+    let mask_px = scratch.pixels();
+    for (i, px) in layer.pixels_mut().iter_mut().enumerate() {
+        let ma = mask_px[i].alpha() as u32;
+        let f = if invert { 255 - ma } else { ma };
+        *px = tiny_skia::PremultipliedColorU8::from_rgba(
+            (px.red() as u32 * f / 255) as u8,
+            (px.green() as u32 * f / 255) as u8,
+            (px.blue() as u32 * f / 255) as u8,
+            (px.alpha() as u32 * f / 255) as u8,
+        )
+        .unwrap();
     }
 }
 

@@ -106,11 +106,17 @@ export default function MenuBar({
             Redo <MenubarShortcut>⇧⌘Z</MenubarShortcut>
           </MenubarItem>
           <MenubarSeparator />
-          <MenubarItem disabled={!sel} onClick={() => copySelection(false)}>
-            Copy <MenubarShortcut>⌘C</MenubarShortcut>
+          <MenubarItem
+            disabled={!sel && !state.hasPixelSelection}
+            onClick={() => copySelection(false)}
+          >
+            Copy {state.hasPixelSelection ? 'Area' : ''} <MenubarShortcut>⌘C</MenubarShortcut>
           </MenubarItem>
-          <MenubarItem disabled={!sel} onClick={() => copySelection(true)}>
-            Cut <MenubarShortcut>⌘X</MenubarShortcut>
+          <MenubarItem
+            disabled={!sel && !state.hasPixelSelection}
+            onClick={() => copySelection(true)}
+          >
+            Cut {state.hasPixelSelection ? 'Area' : ''} <MenubarShortcut>⌘X</MenubarShortcut>
           </MenubarItem>
           <MenubarItem onClick={() => pasteFromClipboard(false)}>
             Paste <MenubarShortcut>⌘V</MenubarShortcut>

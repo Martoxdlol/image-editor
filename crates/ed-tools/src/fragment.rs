@@ -20,6 +20,9 @@ pub struct Fragment {
     /// Bitmap tile pixels keyed by "nodeid/x,y" (content travels with the
     /// fragment so cross-document paste is self-contained).
     pub tiles: BTreeMap<String, Vec<u8>>,
+    /// Param-referenced blob payloads (sel-mask data etc.), content-keyed.
+    #[serde(default)]
+    pub blobs: BTreeMap<String, Vec<u8>>,
     /// Bounds of the copied selection in source doc coords.
     pub bounds: (f64, f64, f64, f64),
     pub source_doc: String,
@@ -71,9 +74,15 @@ fn collect_deps(doc: &Document, nodes: &[&Node]) -> (Vec<PaletteEntry>, BTreeMap
 }
 
 /// Copy a node selection into a fragment (spec §10.3, node-selection row).
-pub fn copy_nodes(doc: &Document, ids: &[NodeId], bounds: (f64, f64, f64, f64)) -> Fragment {
+pub fn copy_nodes(
+    doc: &Document,
+    ids: &[NodeId],
+    bounds: (f64, f64, f64, f64),
+    blob_store: &BlobStore,
+) -> Fragment {
     let mut nodes = Vec::new();
     let mut tiles = BTreeMap::new();
+    let mut blobs = BTreeMap::new();
     // only top-most selected roots (skip ids inside another selected id)
     let roots: Vec<NodeId> = ids
         .iter()
@@ -89,6 +98,11 @@ pub fn copy_nodes(doc: &Document, ids: &[NodeId], bounds: (f64, f64, f64, f64)) 
                 if let Some(bm) = &n.bitmap {
                     for (&(tx, ty), data) in &bm.tiles {
                         tiles.insert(format!("{id}/{tx},{ty}"), data.clone());
+                    }
+                }
+                for hash in ed_document::serialize::node_blob_refs(n) {
+                    if let Some(data) = blob_store.get(hash) {
+                        blobs.insert(hash.to_string(), data.to_vec());
                     }
                 }
             }
@@ -112,6 +126,7 @@ pub fn copy_nodes(doc: &Document, ids: &[NodeId], bounds: (f64, f64, f64, f64)) 
         palette,
         variables,
         tiles,
+        blobs,
         bounds,
         source_doc: doc.name.clone(),
     }
@@ -135,6 +150,12 @@ pub fn paste(
     blobs: &mut BlobStore,
 ) -> Result<Vec<NodeId>, String> {
     doc.begin_txn("Paste");
+
+    // param blobs (masks) land in the target's content-addressed store —
+    // identical content dedupes to the same hash (spec §10.2)
+    for data in frag.blobs.values() {
+        blobs.put(data.clone());
+    }
 
     // -------- dependency resolution (§10.5)
     for e in &frag.palette {
@@ -304,7 +325,7 @@ mod tests {
         let shape = doc.create_node(NodeKind::Shape, Some(ab), params, &blobs).unwrap();
         doc.commit_txn();
 
-        let frag = copy_nodes(&doc, &[shape], (10.0, 20.0, 30.0, 30.0));
+        let frag = copy_nodes(&doc, &[shape], (10.0, 20.0, 30.0, 30.0), &blobs);
         assert_eq!(frag.nodes.len(), 1);
         assert_eq!(frag.palette.len(), 1, "palette dep captured");
 

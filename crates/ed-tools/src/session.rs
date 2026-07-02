@@ -257,13 +257,23 @@ impl Session {
                 self.ungroup_selection()?;
                 Ok(json!(null))
             }
+            // Two cut semantics (§10.3): an active pixel selection means
+            // the AREA is the subject; otherwise whole objects are.
             Copy => {
-                self.copy_selection();
+                if self.has_pixel_selection() {
+                    self.area_copy();
+                } else {
+                    self.copy_selection();
+                }
                 Ok(json!(null))
             }
             Cut => {
-                self.copy_selection();
-                self.delete_selection();
+                if self.has_pixel_selection() {
+                    self.area_cut(true, "Cut area");
+                } else {
+                    self.copy_selection();
+                    self.delete_selection();
+                }
                 Ok(json!(null))
             }
             Paste { in_place } => {
@@ -493,6 +503,10 @@ impl Session {
 
     // ------------------------------------------------------------ edit ops
 
+    pub fn has_pixel_selection(&self) -> bool {
+        self.doc().pixel_selection.as_ref().map(|s| !s.is_empty()).unwrap_or(false)
+    }
+
     pub fn delete_selection(&mut self) {
         let ids: Vec<NodeId> = self.doc().selected_nodes.clone();
         if ids.is_empty() {
@@ -528,7 +542,8 @@ impl Session {
             return;
         }
         let b = self.selection_bounds();
-        self.clipboard = Some(fragment::copy_nodes(self.doc(), &ids, (b.x, b.y, b.w, b.h)));
+        self.clipboard =
+            Some(fragment::copy_nodes(self.doc(), &ids, (b.x, b.y, b.w, b.h), &self.blobs));
     }
 
     pub fn paste_clipboard(&mut self, in_place: bool) -> Result<(), String> {
@@ -568,7 +583,7 @@ impl Session {
             return Ok(());
         }
         let b = self.selection_bounds();
-        let frag = fragment::copy_nodes(self.doc(), &ids, (b.x, b.y, b.w, b.h));
+        let frag = fragment::copy_nodes(self.doc(), &ids, (b.x, b.y, b.w, b.h), &self.blobs);
         let target = self
             .doc()
             .node(ids[0])
@@ -706,7 +721,7 @@ impl Session {
         {
             let doc = &self.docs[self.active].doc;
             for &id in &ids {
-                self.engine.render_node_standalone(doc, id, &mut pm, &m);
+                self.engine.render_node_standalone(doc, &self.blobs, id, &mut pm, &m);
             }
         }
         // demultiply into straight RGBA
@@ -829,7 +844,7 @@ impl Session {
         let doc = &self.docs[self.active].doc;
         let pm = self
             .engine
-            .render_artboard(doc, ab, scale.clamp(0.05, 16.0), true)
+            .render_artboard(doc, &self.blobs, ab, scale.clamp(0.05, 16.0), true)
             .ok_or("render failed")?;
         let rgba = demultiply(&pm);
         match format {
@@ -839,9 +854,15 @@ impl Session {
         }
     }
 
-    /// Copy-as-PNG flavor for the system clipboard (spec §10.7): composite
-    /// of the current selection, or active artboard when nothing selected.
+    /// Copy-as-PNG flavor for the system clipboard (spec §10.7): the area
+    /// composite when a pixel selection is active, else the node selection
+    /// composite, else the active artboard.
     pub fn copy_as_png(&mut self) -> Result<Vec<u8>, String> {
+        if self.has_pixel_selection() {
+            if let Some((w, h, rgba)) = self.area_composite_public() {
+                return ed_io::encode_png(w, h, &rgba);
+            }
+        }
         let ids = self.doc().selected_nodes.clone();
         if ids.is_empty() {
             return self.export(0, 1.0, "png");
@@ -853,7 +874,7 @@ impl Session {
         {
             let doc = &self.docs[self.active].doc;
             for &id in &ids {
-                self.engine.render_node_standalone(doc, id, &mut pm, &m);
+                self.engine.render_node_standalone(doc, &self.blobs, id, &mut pm, &m);
             }
         }
         let rgba = demultiply(&pm);
@@ -896,7 +917,7 @@ impl Session {
         let DocState { doc, view } = &mut self.docs[self.active];
         view.ants_phase = ants_phase;
         let selected = doc.selected_nodes.clone();
-        let pm = self.engine.render(doc, view, width, height, &self.overlays, &selected);
+        let pm = self.engine.render(doc, &self.blobs, view, width, height, &self.overlays, &selected);
         self.last_state_rev = self.frame_rev;
         demultiply(&pm)
     }
@@ -1032,6 +1053,8 @@ fn default_tool_params() -> BTreeMap<String, Value> {
     p.insert("text.size".into(), Value::F64(24.0));
     p.insert("gradient.kind".into(), Value::Str("linear".into()));
     p.insert("sel.feather".into(), Value::F64(0.0));
+    // area cut/move scope (spec §2.3 selections as scope): all | selected | bitmaps
+    p.insert("sel.affect".into(), Value::Str("all".into()));
     p
 }
 

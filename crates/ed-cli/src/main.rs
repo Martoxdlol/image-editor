@@ -48,12 +48,13 @@ fn artboard_by_name(doc: &Document, name: Option<&str>) -> Result<ed_core::NodeI
 
 fn render_to_file(
     doc: &Document,
+    blobs: &BlobStore,
     engine: &mut Engine,
     ab: ed_core::NodeId,
     scale: f64,
     out: &str,
 ) -> Result<(), String> {
-    let pm = engine.render_artboard(doc, ab, scale, true).ok_or("render failed")?;
+    let pm = engine.render_artboard(doc, blobs, ab, scale, true).ok_or("render failed")?;
     let rgba = demultiply(&pm);
     let bytes = if out.ends_with(".jpg") || out.ends_with(".jpeg") {
         ed_io::encode_jpeg(pm.width(), pm.height(), &rgba, 90)?
@@ -81,28 +82,28 @@ fn run(args: &[String]) -> Result<(), String> {
     match cmd {
         "render" => {
             let path = args.get(1).ok_or("usage: ed render <file.myed> [--artboard NAME] [--scale N] -o out.png")?;
-            let (doc, _blobs) = load(path)?;
+            let (doc, blobs) = load(path)?;
             let ab = artboard_by_name(&doc, flag(args, "--artboard").as_deref())?;
             let scale: f64 = flag(args, "--scale").map(|s| s.parse().unwrap_or(1.0)).unwrap_or(1.0);
             let out = flag(args, "-o").unwrap_or_else(|| "out.png".into());
-            render_to_file(&doc, &mut Engine::new(), ab, scale, &out)
+            render_to_file(&doc, &blobs, &mut Engine::new(), ab, scale, &out)
         }
         "export" => {
             let path = args.get(1).ok_or("usage: ed export <file.myed> -o outdir/")?;
-            let (doc, _blobs) = load(path)?;
+            let (doc, blobs) = load(path)?;
             let outdir = flag(args, "-o").unwrap_or_else(|| "out".into());
             std::fs::create_dir_all(&outdir).map_err(|e| e.to_string())?;
             let mut engine = Engine::new();
             for ab in doc.artboards() {
                 let name = doc.node(ab).map(|n| n.name().to_string()).unwrap_or_default();
                 let safe: String = name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
-                render_to_file(&doc, &mut engine, ab, 1.0, &format!("{outdir}/{safe}.png"))?;
+                render_to_file(&doc, &blobs, &mut engine, ab, 1.0, &format!("{outdir}/{safe}.png"))?;
             }
             Ok(())
         }
         "thumbnails" => {
             let path = args.get(1).ok_or("usage: ed thumbnails <file.myed> -o dir/")?;
-            let (doc, _blobs) = load(path)?;
+            let (doc, blobs) = load(path)?;
             let outdir = flag(args, "-o").unwrap_or_else(|| "thumbs".into());
             std::fs::create_dir_all(&outdir).map_err(|e| e.to_string())?;
             let mut engine = Engine::new();
@@ -111,7 +112,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 let scale = (256.0 / rect.w.max(rect.h)).min(1.0);
                 let name = doc.node(ab).map(|n| n.name().to_string()).unwrap_or_default();
                 let safe: String = name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect();
-                render_to_file(&doc, &mut engine, ab, scale, &format!("{outdir}/{safe}.png"))?;
+                render_to_file(&doc, &blobs, &mut engine, ab, scale, &format!("{outdir}/{safe}.png"))?;
             }
             Ok(())
         }

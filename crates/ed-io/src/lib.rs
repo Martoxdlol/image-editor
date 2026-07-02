@@ -68,13 +68,12 @@ pub fn save_myed(doc: &Document, blobs: &mut BlobStore) -> Result<Vec<u8>, Strin
 
     // referenced blobs only (content-addressed, stored uncompressed)
     let mut written = std::collections::HashSet::new();
-    for refs in snapshot.tiles.values() {
-        for r in refs {
-            if written.insert(r.blob) {
-                if let Some(data) = blobs.get(r.blob) {
-                    zw.start_file(format!("blobs/{}", r.blob), store).map_err(|e| e.to_string())?;
-                    zw.write_all(data).map_err(|e| e.to_string())?;
-                }
+    let tile_refs = snapshot.tiles.values().flatten().map(|r| r.blob);
+    for hash in tile_refs.chain(snapshot.param_blobs.iter().copied()) {
+        if written.insert(hash) {
+            if let Some(data) = blobs.get(hash) {
+                zw.start_file(format!("blobs/{hash}"), store).map_err(|e| e.to_string())?;
+                zw.write_all(data).map_err(|e| e.to_string())?;
             }
         }
     }
