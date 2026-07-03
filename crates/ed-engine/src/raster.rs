@@ -105,7 +105,7 @@ pub struct SelMask {
 }
 
 impl SelMask {
-    fn at(&self, x: u32, y: u32) -> f64 {
+    pub fn at(&self, x: u32, y: u32) -> f64 {
         let ix = x as i64 - self.x0;
         let iy = y as i64 - self.y0;
         if ix < 0 || iy < 0 || ix >= self.w as i64 || iy >= self.h as i64 {
@@ -197,15 +197,22 @@ fn color_distance(a: [u8; 4], b: [u8; 4]) -> f64 {
     ((dr * dr + dg * dg + db * db + da * da) / 4.0).sqrt() / 255.0
 }
 
-/// Flood fill (bucket, spec §6.1). Returns true if anything changed.
+/// Flood fill (bucket, spec §6.1). `barrier` pixels (coverage < 0.5 —
+/// outside the selection or hidden by a mask) block the spread and are
+/// never painted. Returns true if anything changed.
 pub fn flood_fill(
     bm: &mut BitmapData,
     seed: (u32, u32),
     color: [u8; 4],
     tolerance: f64,
     contiguous: bool,
+    barrier: Option<&SelMask>,
 ) -> bool {
     if seed.0 >= bm.width || seed.1 >= bm.height {
+        return false;
+    }
+    let open = |x: u32, y: u32| barrier.map(|m| m.at(x, y) >= 0.5).unwrap_or(true);
+    if !open(seed.0, seed.1) {
         return false;
     }
     let target = bm.get_pixel(seed.0, seed.1);
@@ -222,7 +229,7 @@ pub fn flood_fill(
                 continue;
             }
             visited[idx] = true;
-            if color_distance(bm.get_pixel(x, y), target) > tolerance {
+            if !open(x, y) || color_distance(bm.get_pixel(x, y), target) > tolerance {
                 continue;
             }
             bm.set_pixel(x, y, color);
@@ -243,10 +250,31 @@ pub fn flood_fill(
     } else {
         for y in 0..bm.height {
             for x in 0..bm.width {
-                if color_distance(bm.get_pixel(x, y), target) <= tolerance {
+                if open(x, y) && color_distance(bm.get_pixel(x, y), target) <= tolerance {
                     bm.set_pixel(x, y, color);
                     changed = true;
                 }
+            }
+        }
+    }
+    changed
+}
+
+/// Paint a color into every pixel a coverage mask selects (Edit-Fill for
+/// the active selection); coverage weights the blend (feathered edges).
+pub fn fill_region(bm: &mut BitmapData, mask: &SelMask, color: [u8; 4]) -> bool {
+    let mut changed = false;
+    for y in 0..bm.height {
+        for x in 0..bm.width {
+            let cov = mask.at(x, y);
+            if cov <= 0.0 {
+                continue;
+            }
+            let dst = bm.get_pixel(x, y);
+            let out = blend_straight(dst, color, cov);
+            if out != dst {
+                bm.set_pixel(x, y, out);
+                changed = true;
             }
         }
     }
@@ -369,7 +397,7 @@ mod tests {
         for y in 0..16 {
             bm.set_pixel(8, y, [0, 0, 0, 255]);
         }
-        flood_fill(&mut bm, (2, 2), [0, 255, 0, 255], 0.05, true);
+        flood_fill(&mut bm, (2, 2), [0, 255, 0, 255], 0.05, true, None);
         assert_eq!(bm.get_pixel(2, 2), [0, 255, 0, 255]);
         assert_eq!(bm.get_pixel(12, 2), [0, 0, 0, 0], "wall blocked the fill");
         assert_eq!(bm.get_pixel(8, 2), [0, 0, 0, 255], "wall untouched");

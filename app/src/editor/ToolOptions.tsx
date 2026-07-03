@@ -95,7 +95,7 @@ const HINTS: Partial<Record<ToolKind, string>> = {
   lasso: 'Drag a freehand region · ⌘X cuts the area',
   zoom: 'Click to zoom in · ⌥-click out',
   eyedropper: 'Click to pick foreground · ⌥ background',
-  fill: 'Click a bitmap to flood fill · click a shape to recolor',
+  fill: 'Click a bitmap to flood fill · click a shape to recolor · with a selection: fills the selected area only',
   gradient: 'Drag to place a gradient fill region',
 }
 

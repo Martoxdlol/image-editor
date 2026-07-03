@@ -614,6 +614,118 @@ impl Session {
         id.map(|id| (id, Vec2::new(rect.x, rect.y), Vec2::new(1.0, 1.0)))
     }
 
+    /// Visibility of a bitmap's pixels under its enabled sel-mask
+    /// modifiers (area-cut holes): 255 = visible. None when unmasked.
+    fn selmask_visibility(&self, node: NodeId, offset: Vec2, scale: Vec2) -> Option<Vec<u8>> {
+        let n = self.doc().node(node)?;
+        let bm = n.bitmap.as_ref()?;
+        let mods: Vec<_> = n
+            .modifiers
+            .iter()
+            .filter(|m| m.enabled && m.kind == "sel-mask")
+            .collect();
+        if mods.is_empty() {
+            return None;
+        }
+        let mut vis = vec![255u8; (bm.width * bm.height) as usize];
+        for md in mods {
+            let Some(Value::Blob(hash)) = md.params.get("mask") else { continue };
+            let Some(data) = self.blobs.get(*hash) else { continue };
+            let g = |k: &str, d: f64| md.params.get(k).and_then(|v| v.as_f64()).unwrap_or(d);
+            let (mx, my) = (g("x", 0.0), g("y", 0.0));
+            let (mw, mh) = (g("w", 0.0) as i64, g("h", 0.0) as i64);
+            let invert = md.params.get("invert").and_then(|v| v.as_bool()).unwrap_or(true);
+            if mw <= 0 || mh <= 0 || data.len() < (mw * mh) as usize {
+                continue;
+            }
+            for y in 0..bm.height {
+                for x in 0..bm.width {
+                    let dx = offset.x + (x as f64 + 0.5) * scale.x;
+                    let dy = offset.y + (y as f64 + 0.5) * scale.y;
+                    let ix = (dx - mx).floor() as i64;
+                    let iy = (dy - my).floor() as i64;
+                    let cov = if ix < 0 || iy < 0 || ix >= mw || iy >= mh {
+                        0u32
+                    } else {
+                        data[(iy * mw + ix) as usize] as u32
+                    };
+                    let v = if invert { 255 - cov } else { cov };
+                    let i = (y * bm.width + x) as usize;
+                    vis[i] = ((vis[i] as u32 * v) / 255) as u8;
+                }
+            }
+        }
+        Some(vis)
+    }
+
+    /// What the bucket may touch on a bitmap: the pixel selection (if any)
+    /// intersected with what its sel-mask modifiers leave visible.
+    fn fill_constraint_mask(&self, node: NodeId, offset: Vec2, scale: Vec2) -> Option<SelMask> {
+        let sel = self.build_sel_mask(offset, scale, node);
+        let vis = self.selmask_visibility(node, offset, scale);
+        match (sel, vis) {
+            (None, None) => None,
+            (Some(m), None) => Some(m),
+            (None, Some(v)) => {
+                let n = self.doc().node(node)?;
+                let bm = n.bitmap.as_ref()?;
+                Some(SelMask { x0: 0, y0: 0, w: bm.width, h: bm.height, data: v })
+            }
+            (Some(mut m), Some(v)) => {
+                for (a, b) in m.data.iter_mut().zip(v.iter()) {
+                    *a = ((*a as u32 * *b as u32) / 255) as u8;
+                }
+                Some(m)
+            }
+        }
+    }
+
+    /// Edit-Fill for the active selection: paint the selected region onto
+    /// the paint target (clicked/selected bitmap, or a fresh paint layer).
+    fn fill_selection_region(&mut self, p: Vec2, color: ed_core::Color) {
+        let Some((node, offset, scale)) = self.paint_target(p) else { return };
+        let Some(mask) = self.fill_constraint_mask(node, offset, scale) else {
+            self.doc_mut().commit_txn(); // paint_target may have opened one
+            return;
+        };
+        // before-capture the tiles the selection region can touch
+        let sb = match self.doc().pixel_selection.as_ref().map(|s| s.bounds()) {
+            Some(b) => b,
+            None => return,
+        };
+        let rgba = color.to_srgb8();
+        let mut before = BTreeMap::new();
+        let mut changed = false;
+        if let Some(bm) = self.doc_mut().bitmap_mut(node) {
+            let t = ed_document::TILE_SIZE;
+            let x0 = (((sb.x - offset.x) / scale.x).floor().max(0.0)) as u32;
+            let y0 = (((sb.y - offset.y) / scale.y).floor().max(0.0)) as u32;
+            let x1 = ((((sb.x + sb.w) - offset.x) / scale.x).ceil() as u32).min(bm.width);
+            let y1 = ((((sb.y + sb.h) - offset.y) / scale.y).ceil() as u32).min(bm.height);
+            if x0 < x1 && y0 < y1 {
+                for ty in (y0 / t)..=((y1 - 1) / t) {
+                    for tx in (x0 / t)..=((x1 - 1) / t) {
+                        before.insert((tx, ty), bm.tiles.get(&(tx, ty)).cloned());
+                    }
+                }
+                changed = raster::fill_region(bm, &mask, rgba);
+            }
+        }
+        let mut blobs = std::mem::take(&mut self.blobs);
+        {
+            let doc = self.doc_mut();
+            if doc.open_txn_label().is_none() {
+                doc.begin_txn("Fill selection");
+            }
+            if changed {
+                let _ = doc.commit_paint(node, &before, &mut blobs);
+            }
+            doc.commit_txn();
+        }
+        self.blobs = blobs;
+        self.dirty_frame();
+    }
+
     fn build_sel_mask(&self, offset: Vec2, scale: Vec2, node: NodeId) -> Option<SelMask> {
         let sel = self.doc().pixel_selection.as_ref()?;
         if sel.is_empty() {
@@ -747,7 +859,7 @@ impl Session {
             Some((id, NodeKind::Bitmap)) => {
                 let (offset, scale) = bitmap_view(self.doc(), id);
                 let local = Vec2::new((p.x - offset.x) / scale.x, (p.y - offset.y) / scale.y);
-                let mask = self.build_sel_mask(offset, scale, id);
+                let mask = self.fill_constraint_mask(id, offset, scale);
                 let rgba = color.to_srgb8();
                 let mut before = BTreeMap::new();
                 let mut changed = false;
@@ -783,6 +895,16 @@ impl Session {
                     // revert (no visible change)
                 }
                 self.dirty_frame();
+            }
+            // with an active pixel selection the bucket fills the AREA —
+            // recoloring whole objects only happens with no selection
+            Some((_, NodeKind::Shape | NodeKind::Path | NodeKind::Text | NodeKind::GradientFill))
+                if self.has_pixel_selection() =>
+            {
+                self.fill_selection_region(p, color);
+            }
+            None if self.has_pixel_selection() => {
+                self.fill_selection_region(p, color);
             }
             Some((id, NodeKind::Shape | NodeKind::Path | NodeKind::Text | NodeKind::GradientFill)) => {
                 let blobs = std::mem::take(&mut self.blobs);
@@ -1629,12 +1751,12 @@ fn fill_with_mask(
     mask: Option<&SelMask>,
 ) -> bool {
     match mask {
-        None => raster::flood_fill(bm, seed, color, tolerance, contiguous),
+        None => raster::flood_fill(bm, seed, color, tolerance, contiguous, None),
         Some(m) => {
-            // fill only where mask coverage > 0; simple approach: fill a copy
-            // then merge masked pixels
+            // the mask is both a barrier for the spread (hidden/deselected
+            // pixels block it) and a clip on what gets painted
             let mut copy = bm.clone();
-            if !raster::flood_fill(&mut copy, seed, color, tolerance, contiguous) {
+            if !raster::flood_fill(&mut copy, seed, color, tolerance, contiguous, Some(m)) {
                 return false;
             }
             let mut changed = false;
