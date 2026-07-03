@@ -76,6 +76,20 @@ function findNode(roots: OutlineNode[], id: string): OutlineNode | null {
   return null
 }
 
+/** Locate a node's parent id and model index (children are model-ordered). */
+function findParentIndex(
+  roots: OutlineNode[],
+  id: string,
+  parent: string | null = null,
+): { parent: string | null; index: number } | null {
+  for (let i = 0; i < roots.length; i++) {
+    if (roots[i].id === id) return { parent, index: i }
+    const hit = findParentIndex(roots[i].children, id, roots[i].id)
+    if (hit) return hit
+  }
+  return null
+}
+
 function Row({
   node,
   depth,
@@ -109,9 +123,22 @@ function Row({
     if (dragged && subtreeContains(dragged, node.id)) return false
     if (dnd.dragIsArtboard) {
       // artboards live at the top level only
-      return pos !== 'inside' && parentId === null
+      if (pos === 'inside' || parentId !== null) return false
+    } else if (pos === 'inside' && !isContainer) {
+      return false
     }
-    if (pos === 'inside') return isContainer
+    // no-op drops (back into the same slot) get no indicator
+    const src = findParentIndex(roots, dnd.dragId)
+    if (src) {
+      if (pos === 'inside') {
+        if (src.parent === node.id && src.index === node.children.length - 1) return false
+      } else {
+        const insert = pos === 'above' ? modelIndex + 1 : modelIndex
+        if (src.parent === parentId && (insert === src.index || insert === src.index + 1)) {
+          return false
+        }
+      }
+    }
     return true
   }
 

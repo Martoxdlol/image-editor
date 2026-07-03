@@ -388,6 +388,16 @@ impl Session {
                     Some(p) => Some(parse_node_id(&p).ok_or("bad parent id")?),
                     None => None,
                 };
+                // no-op guard: dropping into the slot the node already
+                // occupies must not touch history
+                if self.doc().node(id).map(|n| n.parent) == Some(parent) {
+                    let siblings = self.doc().children_of(parent);
+                    if let Some(cur) = siblings.iter().position(|&s| s == id) {
+                        if index == cur || index == cur + 1 {
+                            return Ok(json!(null));
+                        }
+                    }
+                }
                 let frac = self.doc().frac_for_insert(parent, index);
                 let blobs = std::mem::take(&mut self.blobs);
                 let r = self.doc_mut().apply_txn(
