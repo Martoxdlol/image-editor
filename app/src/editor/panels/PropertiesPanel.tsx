@@ -20,8 +20,17 @@ import {
   type ParamValue,
   type PropsMirror,
 } from '@/core/types'
-import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { MODIFIER_GROUPS } from '../modifiers'
 import { useEditorState } from '../useEditorState'
 import Section from './Section'
 
@@ -261,9 +270,41 @@ function NodeProps({ props }: { props: PropsMirror }) {
       )}
 
       {/* modifier stack (spec §2.2: ordered, toggleable, reorderable) */}
-      {props.modifiers.length > 0 && (
-        <div className="space-y-1">
-          <div className="panel-title pt-1">Modifiers</div>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between pt-1">
+          <span className="panel-title">Modifiers</span>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="flex h-4 w-4 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+                title="Add modifier"
+              >
+                <Plus size={11} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="text-xs">
+              {MODIFIER_GROUPS.map((g, gi) => (
+                <div key={g.group}>
+                  {gi > 0 && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                    {g.group}
+                  </DropdownMenuLabel>
+                  {g.items.map((m) => (
+                    <DropdownMenuItem
+                      key={m.kind}
+                      className="text-xs"
+                      onClick={() => core.cmd({ cmd: 'add-modifier', node: id, kind: m.kind })}
+                    >
+                      {m.label}
+                    </DropdownMenuItem>
+                  ))}
+                </div>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+        {props.modifiers.length > 0 && (
+          <>
           {props.modifiers.map((m, mi) => (
             <div key={m.id} className="rounded border bg-card/60 p-1.5">
               <div className="flex items-center gap-1.5">
@@ -305,8 +346,9 @@ function NodeProps({ props }: { props: PropsMirror }) {
               </div>
             </div>
           ))}
-        </div>
-      )}
+          </>
+        )}
+      </div>
       {state.selection.length > 1 && (
         <div className="text-[10px] text-muted-foreground">{state.selection.length} selected</div>
       )}

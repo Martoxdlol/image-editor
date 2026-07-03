@@ -17,21 +17,10 @@ import { copySelection, pasteFromClipboard } from './clipboard'
 import { useEditorState } from './useEditorState'
 import { DPR } from './CanvasView'
 
-const FILTERS: { kind: string; label: string }[] = [
-  { kind: 'filter.gaussian-blur', label: 'Gaussian Blur' },
-  { kind: 'filter.pixelate', label: 'Pixelate' },
-  { kind: 'filter.noise', label: 'Add Noise' },
-]
+import { MODIFIER_GROUPS } from './modifiers'
 
-const ADJUSTMENTS: { kind: string; label: string }[] = [
-  { kind: 'adjust.brightness-contrast', label: 'Brightness / Contrast' },
-  { kind: 'adjust.hsl', label: 'Hue / Saturation / Lightness' },
-  { kind: 'adjust.levels', label: 'Levels' },
-  { kind: 'adjust.invert', label: 'Invert' },
-  { kind: 'adjust.grayscale', label: 'Grayscale' },
-  { kind: 'adjust.posterize', label: 'Posterize' },
-  { kind: 'adjust.threshold', label: 'Threshold' },
-]
+const FILTERS = MODIFIER_GROUPS.find((g) => g.group === 'Filters')!.items
+const ADJUSTMENTS = MODIFIER_GROUPS.find((g) => g.group === 'Adjustments')!.items
 
 export default function MenuBar({
   onNewDoc,
