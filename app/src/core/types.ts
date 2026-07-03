@@ -94,6 +94,7 @@ export interface EditorState {
   view: { zoom: number; panX: number; panY: number; pixelPreview: boolean }
   outline: OutlineNode[]
   history: HistoryEntry[]
+  undoTop: number | null
   canUndo: boolean
   canRedo: boolean
   selection: string[]
@@ -116,6 +117,7 @@ export const EMPTY_STATE: EditorState = {
   view: { zoom: 1, panX: 0, panY: 0, pixelPreview: false },
   outline: [],
   history: [],
+  undoTop: null,
   canUndo: false,
   canRedo: false,
   selection: [],

@@ -239,6 +239,19 @@ impl Document {
         !self.undo_stack.is_empty()
     }
 
+    /// The txn whose state we're currently at (top of the undo stack).
+    pub fn undo_top(&self) -> Option<TxnId> {
+        self.undo_stack.last().copied()
+    }
+
+    pub fn undo_stack_contains(&self, id: TxnId) -> bool {
+        self.undo_stack.contains(&id)
+    }
+
+    pub fn redo_stack_contains(&self, id: TxnId) -> bool {
+        self.redo_stack.contains(&id)
+    }
+
     pub fn can_redo(&self) -> bool {
         !self.redo_stack.is_empty()
     }

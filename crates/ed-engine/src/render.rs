@@ -471,13 +471,20 @@ impl Engine {
                 let (_, pm) = &self.bitmap_cache[&node.id];
                 let x = doc.param_f64(node, "x", 0.0);
                 let y = doc.param_f64(node, "y", 0.0);
-                let quality = if export || zoom >= 3.0 {
+                // non-destructive resize: w/h params scale the natural size
+                let (nw, nh) = (pm.width() as f64, pm.height() as f64);
+                let sx = doc.param_f64(node, "w", nw) / nw.max(1.0);
+                let sy = doc.param_f64(node, "h", nh) / nh.max(1.0);
+                let scaled = (sx - 1.0).abs() > 1e-6 || (sy - 1.0).abs() > 1e-6;
+                let quality = if !scaled && (export || zoom >= 3.0) {
                     tiny_skia::FilterQuality::Nearest
                 } else {
                     tiny_skia::FilterQuality::Bilinear
                 };
                 let paint = PixmapPaint { quality, ..Default::default() };
-                let t2 = to_transform(&m.mul(&Mat3::translate(Vec2::new(x, y))));
+                let t2 = to_transform(
+                    &m.mul(&Mat3::translate(Vec2::new(x, y))).mul(&Mat3::scale(sx, sy)),
+                );
                 canvas.draw_pixmap(0, 0, pm.as_ref(), &paint, t2, mask);
             }
             NodeKind::StrokeSet => {
@@ -605,8 +612,8 @@ impl Engine {
                 Some(Rect::new(
                     doc.param_f64(node, "x", 0.0),
                     doc.param_f64(node, "y", 0.0),
-                    bm.width as f64,
-                    bm.height as f64,
+                    doc.param_f64(node, "w", bm.width as f64),
+                    doc.param_f64(node, "h", bm.height as f64),
                 ))
             }
             NodeKind::StrokeSet => strokes_bounds(node),

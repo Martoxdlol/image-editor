@@ -193,6 +193,24 @@ impl PixelSelection {
         out
     }
 
+    /// Rasterize over a scaled pixel grid: pixel (x, y) samples doc point
+    /// `origin + ((x+0.5)·sx, (y+0.5)·sy)` — used for bitmaps displayed at
+    /// a non-natural size (non-destructive w/h resize).
+    pub fn rasterize_scaled(&self, ox: f64, oy: f64, sx: f64, sy: f64, w: u32, h: u32) -> Vec<u8> {
+        let mut mask = vec![0u8; (w as usize) * (h as usize)];
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let p = Vec2::new(ox + (x as f64 + 0.5) * sx, oy + (y as f64 + 0.5) * sy);
+                mask[y * (w as usize) + x] = (self.coverage(p) * 255.0).round() as u8;
+            }
+        }
+        let r = self.feather.round() as usize;
+        if r > 0 {
+            mask = box_blur_mask(&mask, w as usize, h as usize, r);
+        }
+        mask
+    }
+
     /// Rasterize the selection to an 8-bit coverage mask over an integer
     /// pixel region. Applies feather as a separable box blur.
     pub fn rasterize(&self, x0: i64, y0: i64, w: u32, h: u32) -> Vec<u8> {

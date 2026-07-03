@@ -263,14 +263,18 @@ fn clear_bitmap_region(
     blobs: &mut ed_document::BlobStore,
 ) {
     let offset = doc.node_position(id);
-    let Some(bm) = doc.node(id).and_then(|n| n.bitmap.as_ref()) else { return };
+    let Some(n) = doc.node(id) else { return };
+    let Some(bm) = n.bitmap.as_ref() else { return };
     let bw = bm.width;
     let bh = bm.height;
+    // display scale (non-destructive w/h resize)
+    let sx = doc.param_f64(n, "w", bw as f64) / (bw as f64).max(1.0);
+    let sy = doc.param_f64(n, "h", bh as f64) / (bh as f64).max(1.0);
     // intersect region in bitmap-local pixels
-    let x0 = ((bounds.x - offset.x).floor().max(0.0)) as u32;
-    let y0 = ((bounds.y - offset.y).floor().max(0.0)) as u32;
-    let x1 = (((bounds.x + bounds.w) - offset.x).ceil().min(bw as f64)) as u32;
-    let y1 = (((bounds.y + bounds.h) - offset.y).ceil().min(bh as f64)) as u32;
+    let x0 = (((bounds.x - offset.x) / sx).floor().max(0.0)) as u32;
+    let y0 = (((bounds.y - offset.y) / sy).floor().max(0.0)) as u32;
+    let x1 = ((((bounds.x + bounds.w) - offset.x) / sx).ceil().min(bw as f64)) as u32;
+    let y1 = ((((bounds.y + bounds.h) - offset.y) / sy).ceil().min(bh as f64)) as u32;
     if x0 >= x1 || y0 >= y1 {
         return;
     }
@@ -282,9 +286,11 @@ fn clear_bitmap_region(
             before.insert((tx, ty), bm.tiles.get(&(tx, ty)).cloned());
         }
     }
-    let cov = sel.rasterize(
-        (offset.x + x0 as f64) as i64,
-        (offset.y + y0 as f64) as i64,
+    let cov = sel.rasterize_scaled(
+        offset.x + x0 as f64 * sx,
+        offset.y + y0 as f64 * sy,
+        sx,
+        sy,
         x1 - x0,
         y1 - y0,
     );

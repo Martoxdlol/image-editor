@@ -4,8 +4,8 @@
 
 import { core } from '@/core/bridge'
 import { Input } from '@/components/ui/input'
-import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
+import NumSlider from '../NumSlider'
 import {
   Select,
   SelectContent,
@@ -124,20 +124,16 @@ function NodeProps({ props }: { props: PropsMirror }) {
       {/* opacity + blend on every node (spec §15) */}
       <div className="flex items-center gap-2">
         <span className="w-12 text-[10px] uppercase text-muted-foreground">Opacity</span>
-        <Slider
+        <NumSlider
           className="flex-1"
           min={0}
           max={1}
           step={0.01}
-          value={[paramNumber(p.opacity, 1)]}
-          onValueChange={([v]) =>
-            core.cmd({ cmd: 'preview-param', node: id, path: 'opacity', value: v }, true)
-          }
-          onValueCommit={([v]) => core.cmd({ cmd: 'set-param', node: id, path: 'opacity', value: v })}
+          percent
+          value={paramNumber(p.opacity, 1)}
+          onPreview={(v) => core.cmd({ cmd: 'preview-param', node: id, path: 'opacity', value: v }, true)}
+          onCommit={(v) => core.cmd({ cmd: 'set-param', node: id, path: 'opacity', value: v })}
         />
-        <span className="num w-8 text-right text-[10px]">
-          {Math.round(paramNumber(p.opacity, 1) * 100)}%
-        </span>
       </div>
       <div className="flex items-center gap-2">
         <span className="w-12 text-[10px] uppercase text-muted-foreground">Blend</span>

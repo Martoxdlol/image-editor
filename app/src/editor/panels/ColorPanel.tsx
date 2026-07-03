@@ -2,6 +2,13 @@
 // live-propagating refs §6.7), and document variables (§6.7/§8).
 
 import { core } from '@/core/bridge'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { Input } from '@/components/ui/input'
 import { colorToHex, paramNumber } from '@/core/types'
 import { Plus, X } from 'lucide-react'
@@ -71,19 +78,36 @@ export default function ColorPanel() {
           <span className="text-[10px] text-muted-foreground">No named colors yet</span>
         )}
         {state.palette.map((e) => (
-          <div key={e.name} className="group relative" title={e.name}>
-            <button
-              className="h-5 w-5 rounded-sm border"
-              style={{ background: colorToHex(e.color) }}
-              onClick={() => core.cmd({ cmd: 'set-fg', color: colorToHex(e.color) })}
-            />
-            <button
-              className="absolute -right-1 -top-1 hidden rounded-full bg-destructive p-px group-hover:block"
-              onClick={() => core.cmd({ cmd: 'set-palette', name: e.name, color: null })}
-            >
-              <X size={8} />
-            </button>
-          </div>
+          <ContextMenu key={e.name}>
+            <ContextMenuTrigger asChild>
+              <button
+                className="h-5 w-5 rounded-sm border"
+                title={e.name}
+                style={{ background: colorToHex(e.color) }}
+                onClick={() => core.cmd({ cmd: 'set-fg', color: colorToHex(e.color) })}
+              />
+            </ContextMenuTrigger>
+            <ContextMenuContent className="text-xs">
+              <ContextMenuItem onClick={() => core.cmd({ cmd: 'set-fg', color: colorToHex(e.color) })}>
+                Set as foreground
+              </ContextMenuItem>
+              <ContextMenuItem onClick={() => core.cmd({ cmd: 'set-bg', color: colorToHex(e.color) })}>
+                Set as background
+              </ContextMenuItem>
+              <ContextMenuItem
+                onClick={() => core.cmd({ cmd: 'set-palette', name: e.name, color: state.fg })}
+              >
+                Update to current fg
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                variant="destructive"
+                onClick={() => core.cmd({ cmd: 'set-palette', name: e.name, color: null })}
+              >
+                Delete “{e.name}”
+              </ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         ))}
       </div>
 

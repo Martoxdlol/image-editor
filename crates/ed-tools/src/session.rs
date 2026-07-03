@@ -495,6 +495,45 @@ impl Session {
                 self.key(&key, mods);
                 Ok(json!(null))
             }
+            // context-menu helper: select the node under a screen point
+            // without starting a drag (keeps existing multi-selection when
+            // the point is already inside it)
+            SelectAt { x, y } => {
+                let p = self.view().screen_to_doc(Vec2::new(x, y));
+                if let Some(id) = self.engine.hit_test(self.doc(), p, false) {
+                    if !self.doc().selected_nodes.contains(&id) {
+                        self.doc_mut().selected_nodes = vec![id];
+                    }
+                }
+                self.dirty_frame();
+                Ok(json!(null))
+            }
+            // history panel "revert to here" (spec §14 jump-to): walk
+            // undo/redo until the target txn is the current state
+            HistoryJump { id } => {
+                self.cancel_drag();
+                self.flush_param_preview();
+                let target = ed_core::TxnId(id);
+                let blobs = std::mem::take(&mut self.blobs);
+                {
+                    let doc = self.doc_mut();
+                    let mut guard = 0;
+                    if doc.undo_stack_contains(target) {
+                        while doc.undo_top() != Some(target) && doc.can_undo() && guard < 10_000 {
+                            doc.undo(&blobs);
+                            guard += 1;
+                        }
+                    } else if doc.redo_stack_contains(target) {
+                        while doc.undo_top() != Some(target) && doc.can_redo() && guard < 10_000 {
+                            doc.redo(&blobs);
+                            guard += 1;
+                        }
+                    }
+                }
+                self.blobs = blobs;
+                self.dirty_frame();
+                Ok(json!(null))
+            }
             RasterizeSelection => {
                 self.rasterize_selection()?;
                 Ok(json!(null))
@@ -829,6 +868,8 @@ impl Session {
             params.insert("name".into(), Value::Str(name.to_string()));
             params.insert("x".into(), Value::F64((center.x - w as f64 / 2.0).round()));
             params.insert("y".into(), Value::F64((center.y - h as f64 / 2.0).round()));
+            params.insert("w".into(), Value::F64(w as f64));
+            params.insert("h".into(), Value::F64(h as f64));
             let id = doc.create_node(NodeKind::Bitmap, parent, params, &blobs)?;
             if let Some(n) = doc.nodes.get_mut(&id) {
                 n.bitmap = Some(ed_document::BitmapData::from_rgba(w, h, &rgba));
@@ -954,6 +995,7 @@ impl Session {
             },
             "outline": doc.outline(),
             "history": doc.history_mirror(),
+            "undoTop": doc.undo_top().map(|t| t.0),
             "canUndo": doc.can_undo(),
             "canRedo": doc.can_redo(),
             "selection": doc.selected_nodes.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
@@ -1168,4 +1210,6 @@ enum Command {
     Key { key: String, #[serde(default)] mods: crate::input::Modifiers },
     RasterizeSelection,
     ConvertToPath,
+    SelectAt { x: f64, y: f64 },
+    HistoryJump { id: u64 },
 }

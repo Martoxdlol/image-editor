@@ -2,8 +2,8 @@
 // param schema (spec §3.4).
 
 import { core } from '@/core/bridge'
-import { Slider } from '@/components/ui/slider'
 import { Switch } from '@/components/ui/switch'
+import NumSlider from './NumSlider'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { paramBool, paramNumber, paramString, type ToolKind } from '@/core/types'
 import { useEditorState } from './useEditorState'
@@ -109,22 +109,21 @@ export default function ToolOptions() {
       {opts.map((opt) => {
         if (opt.kind === 'num') {
           const val = paramNumber(state.toolParams[opt.key], opt.def)
+          const set = (v: number, hot: boolean) =>
+            core.cmd({ cmd: 'set-tool-param', key: opt.key, value: { t: 'f64', v } }, hot)
           return (
             <label key={opt.key} className="flex items-center gap-2 text-xs text-muted-foreground">
               {opt.label}
-              <Slider
-                className="w-24"
+              <NumSlider
+                className="w-40"
                 min={opt.min}
                 max={opt.max}
-                step={opt.step ?? (opt.max - opt.min) / 100}
-                value={[val]}
-                onValueChange={([v]) =>
-                  core.cmd({ cmd: 'set-tool-param', key: opt.key, value: { t: 'f64', v } }, true)
-                }
+                step={opt.step}
+                percent={opt.max <= 1}
+                value={val}
+                onPreview={(v) => set(v, true)}
+                onCommit={(v) => set(v, false)}
               />
-              <span className="num w-9 text-right text-[11px] text-foreground">
-                {opt.max <= 1 ? `${Math.round(val * 100)}%` : Math.round(val)}
-              </span>
             </label>
           )
         }

@@ -72,6 +72,8 @@ pub enum DragState {
     Paint {
         node: NodeId,
         offset: Vec2,
+        /// Display scale of the bitmap (w/h params ÷ natural size).
+        scale: Vec2,
         before: BTreeMap<(u32, u32), Option<Vec<u8>>>,
         last: Vec2,
         carry: f64,
@@ -317,14 +319,23 @@ impl Session {
                     .iter()
                     .filter_map(|&id| {
                         let n = self.doc().node(id)?;
-                        if n.get_param("w").is_some() || n.kind == NodeKind::Shape {
+                        // bitmaps default to their natural pixel size —
+                        // resizing writes w/h params (non-destructive scale)
+                        let (dw, dh) = match &n.bitmap {
+                            Some(bm) => (bm.width as f64, bm.height as f64),
+                            None => (0.0, 0.0),
+                        };
+                        if n.get_param("w").is_some()
+                            || n.kind == NodeKind::Shape
+                            || n.kind == NodeKind::Bitmap
+                        {
                             Some((
                                 id,
                                 Rect::new(
                                     self.doc().param_f64(n, "x", 0.0),
                                     self.doc().param_f64(n, "y", 0.0),
-                                    self.doc().param_f64(n, "w", 0.0),
-                                    self.doc().param_f64(n, "h", 0.0),
+                                    self.doc().param_f64(n, "w", dw),
+                                    self.doc().param_f64(n, "h", dh),
                                 ),
                             ))
                         } else {
@@ -553,14 +564,22 @@ impl Session {
     /// Find or create the paint target bitmap. Spec §2.5: painting is
     /// destructive within a Bitmap node; "paint as strokes" records a
     /// StrokeSet instead.
-    fn paint_target(&mut self, p: Vec2) -> Option<(NodeId, Vec2)> {
+    fn paint_target(&mut self, p: Vec2) -> Option<(NodeId, Vec2, Vec2)> {
+        fn bitmap_scale(doc: &ed_document::Document, id: NodeId) -> Vec2 {
+            let Some(n) = doc.node(id) else { return Vec2::new(1.0, 1.0) };
+            let Some(bm) = &n.bitmap else { return Vec2::new(1.0, 1.0) };
+            Vec2::new(
+                doc.param_f64(n, "w", bm.width as f64) / (bm.width as f64).max(1.0),
+                doc.param_f64(n, "h", bm.height as f64) / (bm.height as f64).max(1.0),
+            )
+        }
         // selected bitmap?
         let sel = self.doc().selected_nodes.clone();
         for id in sel {
             if let Some(n) = self.doc().node(id) {
                 if n.kind == NodeKind::Bitmap && n.visible() && !n.locked() {
                     let off = self.doc().node_position(id);
-                    return Some((id, off));
+                    return Some((id, off, bitmap_scale(self.doc(), id)));
                 }
             }
         }
@@ -569,7 +588,7 @@ impl Session {
             if let Some(n) = self.doc().node(id) {
                 if n.kind == NodeKind::Bitmap {
                     let off = self.doc().node_position(id);
-                    return Some((id, off));
+                    return Some((id, off, bitmap_scale(self.doc(), id)));
                 }
             }
         }
@@ -600,21 +619,18 @@ impl Session {
             id
         };
         self.blobs = blobs;
-        id.map(|id| (id, Vec2::new(rect.x, rect.y)))
+        id.map(|id| (id, Vec2::new(rect.x, rect.y), Vec2::new(1.0, 1.0)))
     }
 
-    fn build_sel_mask(&self, offset: Vec2, node: NodeId) -> Option<SelMask> {
+    fn build_sel_mask(&self, offset: Vec2, scale: Vec2, node: NodeId) -> Option<SelMask> {
         let sel = self.doc().pixel_selection.as_ref()?;
         if sel.is_empty() {
             return None;
         }
         let n = self.doc().node(node)?;
         let bm = n.bitmap.as_ref()?;
-        // rasterize selection over the bitmap's doc-space rect, then store
-        // in bitmap-local coords
-        let x0 = offset.x.floor() as i64;
-        let y0 = offset.y.floor() as i64;
-        let data = sel.rasterize(x0, y0, bm.width, bm.height);
+        // rasterize the selection in bitmap-local pixels (scale-aware)
+        let data = sel.rasterize_scaled(offset.x, offset.y, scale.x, scale.y, bm.width, bm.height);
         Some(SelMask { x0: 0, y0: 0, w: bm.width, h: bm.height, data })
     }
 
@@ -624,24 +640,26 @@ impl Session {
             self.strokes_down(ev, p);
             return;
         }
-        let Some((node, offset)) = self.paint_target(p) else { return };
+        let Some((node, offset, scale)) = self.paint_target(p) else { return };
         if self.doc().open_txn_label().is_none() {
             self.doc_mut().begin_txn(if pixel_perfect { "Pencil" } else { "Brush" });
         }
-        let mask = self.build_sel_mask(offset, node);
+        let mask = self.build_sel_mask(offset, scale, node);
         let params = self.paint_brush_params(pixel_perfect, false);
         let color = self.fg.to_srgb8();
-        let local = p - offset;
+        let local = Vec2::new((p.x - offset.x) / scale.x, (p.y - offset.y) / scale.y);
+        let px_size = params.size / ((scale.x + scale.y) / 2.0).max(1e-6);
         let mut before = BTreeMap::new();
         if let Some(bm) = self.doc_mut().bitmap_mut(node) {
-            capture_before(bm, local, params.size, &mut before);
+            capture_before(bm, local, px_size, &mut before);
             let mut prms = params;
-            prms.size = params.size * ev.pressure.max(0.05);
+            prms.size = px_size * ev.pressure.max(0.05);
             raster::stroke_segment(bm, local, local, &prms, color, 0.0, mask.as_ref());
         }
         self.drag = Some(DragState::Paint {
             node,
             offset,
+            scale,
             before,
             last: local,
             carry: 0.0,
@@ -651,23 +669,25 @@ impl Session {
     }
 
     fn erase_down(&mut self, ev: InputEvent, p: Vec2) {
-        let Some((node, offset)) = self.paint_target(p) else { return };
+        let Some((node, offset, scale)) = self.paint_target(p) else { return };
         if self.doc().open_txn_label().is_none() {
             self.doc_mut().begin_txn("Eraser");
         }
-        let mask = self.build_sel_mask(offset, node);
+        let mask = self.build_sel_mask(offset, scale, node);
         let params = self.paint_brush_params(false, true);
-        let local = p - offset;
+        let local = Vec2::new((p.x - offset.x) / scale.x, (p.y - offset.y) / scale.y);
+        let px_size = params.size / ((scale.x + scale.y) / 2.0).max(1e-6);
         let mut before = BTreeMap::new();
         if let Some(bm) = self.doc_mut().bitmap_mut(node) {
-            capture_before(bm, local, params.size, &mut before);
+            capture_before(bm, local, px_size, &mut before);
             let mut prms = params;
-            prms.size = params.size * ev.pressure.max(0.05);
+            prms.size = px_size * ev.pressure.max(0.05);
             raster::stroke_segment(bm, local, local, &prms, [0, 0, 0, 0], 0.0, mask.as_ref());
         }
         self.drag = Some(DragState::Paint {
             node,
             offset,
+            scale,
             before,
             last: local,
             carry: 0.0,
@@ -734,8 +754,16 @@ impl Session {
         match hit.and_then(|id| self.doc().node(id).map(|n| (id, n.kind))) {
             Some((id, NodeKind::Bitmap)) => {
                 let offset = self.doc().node_position(id);
-                let local = p - offset;
-                let mask = self.build_sel_mask(offset, id);
+                let scale = {
+                    let n = self.doc().node(id).unwrap();
+                    let bm = n.bitmap.as_ref().unwrap();
+                    Vec2::new(
+                        self.doc().param_f64(n, "w", bm.width as f64) / (bm.width as f64).max(1.0),
+                        self.doc().param_f64(n, "h", bm.height as f64) / (bm.height as f64).max(1.0),
+                    )
+                };
+                let local = Vec2::new((p.x - offset.x) / scale.x, (p.y - offset.y) / scale.y);
+                let mask = self.build_sel_mask(offset, scale, id);
                 let rgba = color.to_srgb8();
                 let mut before = BTreeMap::new();
                 let mut changed = false;
@@ -1009,9 +1037,9 @@ impl Session {
                     _ => vec![Overlay::RectOutline { rect: Rect::from_points(s, c), dashed: false }],
                 };
             }
-            DragState::Paint { node, offset, before, last, carry, mask, .. } => {
-                let (node, offset) = (*node, *offset);
-                let local = p - offset;
+            DragState::Paint { node, offset, scale, before, last, carry, mask, .. } => {
+                let (node, offset, scale) = (*node, *offset, *scale);
+                let local = Vec2::new((p.x - offset.x) / scale.x, (p.y - offset.y) / scale.y);
                 let prev = *last;
                 let carry_in = *carry;
                 *last = local;
@@ -1023,8 +1051,9 @@ impl Session {
                     ToolKind::Eraser => self.paint_brush_params(false, true),
                     _ => self.paint_brush_params(false, false),
                 };
+                let px_size = params.size / ((scale.x + scale.y) / 2.0).max(1e-6);
                 let mut prms = params;
-                prms.size = params.size * ev.pressure.max(0.05);
+                prms.size = px_size * ev.pressure.max(0.05);
                 let color = if params.erase { [0, 0, 0, 0] } else { self.fg.to_srgb8() };
                 let mut new_carry = carry_in;
                 if let Some(bm) = self.doc_mut().bitmap_mut(node) {

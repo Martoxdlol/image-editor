@@ -2,7 +2,15 @@
 // component only forwards input (spec §12.3) and manages sizing.
 
 import { useEffect, useRef } from 'react'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu'
 import { core } from '@/core/bridge'
+import { copySelection, pasteFromClipboard } from './clipboard'
 import { useEditorState } from './useEditorState'
 
 const DPR = Math.min(window.devicePixelRatio || 1, 2)
@@ -181,14 +189,80 @@ export default function CanvasView() {
     }
   }, [])
 
+  const hasSel = state.selection.length > 0
+  const hasAny = hasSel || state.hasPixelSelection
+
   return (
-    <div ref={holderRef} className="relative flex-1 overflow-hidden bg-[#222226]">
-      <canvas
-        ref={canvasRef}
-        className="absolute left-0 top-0 touch-none"
-        style={{ cursor: CURSOR_BY_TOOL[state.tool] ?? 'default' }}
-      />
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={holderRef}
+          className="relative flex-1 overflow-hidden bg-[#222226]"
+          onContextMenu={(e) => {
+            // select what's under the cursor before the menu opens
+            const canvas = canvasRef.current
+            if (!canvas) return
+            const r = canvas.getBoundingClientRect()
+            core.cmd({
+              cmd: 'select-at',
+              x: (e.clientX - r.left) * DPR,
+              y: (e.clientY - r.top) * DPR,
+            })
+          }}
+        >
+          <canvas
+            ref={canvasRef}
+            className="absolute left-0 top-0 touch-none"
+            style={{ cursor: CURSOR_BY_TOOL[state.tool] ?? 'default' }}
+          />
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-52 text-xs">
+        <ContextMenuItem disabled={!hasAny} onClick={() => copySelection(true)}>
+          Cut {state.hasPixelSelection ? 'Area' : ''}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!hasAny} onClick={() => copySelection(false)}>
+          Copy {state.hasPixelSelection ? 'Area' : ''}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => pasteFromClipboard(false)}>Paste</ContextMenuItem>
+        <ContextMenuItem
+          disabled={!state.clipboardFull}
+          onClick={() => pasteFromClipboard(true)}
+        >
+          Paste in Place
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!hasSel} onClick={() => core.cmd({ cmd: 'duplicate-selection' })}>
+          Duplicate
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem disabled={!hasSel} onClick={() => core.cmd({ cmd: 'group-selection' })}>
+          Group
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!hasSel} onClick={() => core.cmd({ cmd: 'ungroup-selection' })}>
+          Ungroup
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!hasSel} onClick={() => core.cmd({ cmd: 'rasterize-selection' })}>
+          Rasterize
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!hasSel} onClick={() => core.cmd({ cmd: 'convert-to-path' })}>
+          Convert to Path
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem
+          disabled={!state.hasPixelSelection}
+          onClick={() => core.cmd({ cmd: 'clear-pixel-selection' })}
+        >
+          Deselect Area
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!hasSel}
+          variant="destructive"
+          onClick={() => core.cmd({ cmd: 'delete-selection' })}
+        >
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   )
 }
 

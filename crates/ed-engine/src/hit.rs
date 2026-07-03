@@ -108,14 +108,19 @@ impl Engine {
                 let bm = node.bitmap.as_ref()?;
                 let x = doc.param_f64(node, "x", 0.0);
                 let y = doc.param_f64(node, "y", 0.0);
-                let bx = local.x - x;
-                let by = local.y - y;
-                if bx < 0.0 || by < 0.0 || bx >= bm.width as f64 || by >= bm.height as f64 {
+                let w = doc.param_f64(node, "w", bm.width as f64).max(1e-6);
+                let h = doc.param_f64(node, "h", bm.height as f64).max(1e-6);
+                // normalized position handles non-destructive w/h scaling
+                let u = (local.x - x) / w;
+                let v = (local.y - y) / h;
+                if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
                     return None;
                 }
                 // hit only where paint exists — a transparent paint layer
                 // must not swallow clicks meant for nodes underneath
-                if bm.get_pixel(bx as u32, by as u32)[3] < 8 {
+                let px = ((u * bm.width as f64) as u32).min(bm.width - 1);
+                let py = ((v * bm.height as f64) as u32).min(bm.height - 1);
+                if bm.get_pixel(px, py)[3] < 8 {
                     return None;
                 }
                 Some(id)
