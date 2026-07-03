@@ -54,7 +54,7 @@ impl Default for Session {
 impl Session {
     pub fn new() -> Self {
         let blobs = BlobStore::default();
-        let doc = Document::with_artboard(ActorId(1), "Untitled 1", 800.0, 600.0, &blobs);
+        let doc = Document::with_artboard(ActorId(1), "Untitled 1", 4000.0, 3000.0, &blobs);
         Session {
             blobs,
             docs: vec![DocState { doc, view: View::default() }],
@@ -173,16 +173,31 @@ impl Session {
                 self.bg = Color::from_hex(&color).ok_or("bad color")?;
                 Ok(json!(null))
             }
-            NewDoc { width, height } => {
+            NewDoc { width, height, name, background, bg_color, dpi } => {
                 self.doc_counter += 1;
-                let name = format!("Untitled {}", self.doc_counter);
-                let doc = Document::with_artboard(
+                let name = name
+                    .filter(|n| !n.trim().is_empty())
+                    .unwrap_or_else(|| format!("Untitled {}", self.doc_counter));
+                let mut doc = Document::with_artboard(
                     ActorId(1),
                     &name,
                     width.clamp(1.0, ed_document::MAX_ARTBOARD_DIM),
                     height.clamp(1.0, ed_document::MAX_ARTBOARD_DIM),
                     &self.blobs,
                 );
+                // initial artboard settings are part of the fresh document,
+                // not history
+                let ab = doc.artboards()[0];
+                if let Some(bg) = background {
+                    doc.preview_param(ab, "background", Value::Str(bg));
+                }
+                if let Some(c) = bg_color.and_then(|c| Color::from_hex(&c)) {
+                    doc.preview_param(ab, "bg-color", Value::Color(c));
+                }
+                if let Some(d) = dpi {
+                    doc.preview_param(ab, "dpi", Value::F64(d.clamp(1.0, 1200.0)));
+                }
+                doc.dirty = false;
                 self.docs.push(DocState { doc, view: View::default() });
                 self.active = self.docs.len() - 1;
                 self.fit_view();
@@ -1025,21 +1040,74 @@ impl Session {
 
     // ------------------------------------------------------------ io
 
-    pub fn import_image(&mut self, bytes: &[u8], name: &str) -> Result<(), String> {
+    /// Import with placement options (spec §9): `scale` < 0 = fit the
+    /// artboard, 1.0 = original pixels, otherwise a custom factor;
+    /// `new_doc` opens the image as its own document.
+    pub fn import_image(
+        &mut self,
+        bytes: &[u8],
+        name: &str,
+        scale: f64,
+        new_doc: bool,
+    ) -> Result<(), String> {
         let (w, h, rgba) = ed_io::decode_image(bytes)?;
+        if new_doc {
+            let doc_name = name.rsplit_once('.').map(|(n, _)| n).unwrap_or(name);
+            let mut doc = Document::with_artboard(
+                ActorId(1),
+                doc_name,
+                (w as f64).min(ed_document::MAX_ARTBOARD_DIM),
+                (h as f64).min(ed_document::MAX_ARTBOARD_DIM),
+                &self.blobs,
+            );
+            let ab = doc.artboards()[0];
+            doc.begin_txn("Import image");
+            let mut params = BTreeMap::new();
+            params.insert("name".into(), Value::Str(name.to_string()));
+            params.insert("x".into(), Value::F64(0.0));
+            params.insert("y".into(), Value::F64(0.0));
+            params.insert("w".into(), Value::F64(w as f64));
+            params.insert("h".into(), Value::F64(h as f64));
+            let blobs = std::mem::take(&mut self.blobs);
+            let id = doc.create_node(NodeKind::Bitmap, Some(ab), params, &blobs)?;
+            self.blobs = blobs;
+            if let Some(n) = doc.nodes.get_mut(&id) {
+                n.bitmap = Some(ed_document::BitmapData::from_rgba(w, h, &rgba));
+            }
+            doc.commit_txn();
+            doc.history.clear();
+            doc.dirty = false;
+            doc.selected_nodes = vec![id];
+            self.docs.push(DocState { doc, view: View::default() });
+            self.active = self.docs.len() - 1;
+            self.fit_view();
+            self.dirty_frame();
+            return Ok(());
+        }
         let (vw, vh) = self.viewport;
         let center = self.view().screen_to_doc(Vec2::new(vw as f64 / 2.0, vh as f64 / 2.0));
         let parent = self.engine.artboard_at(self.doc(), center);
+        // resolve placement scale (non-destructive: w/h params)
+        let factor = if scale < 0.0 {
+            match parent.and_then(|ab| self.doc().artboard_rect(ab)) {
+                Some(r) => (r.w / w as f64).min(r.h / h as f64).min(1.0),
+                None => 1.0,
+            }
+        } else {
+            scale.clamp(0.01, 16.0)
+        };
+        let dw = (w as f64 * factor).round();
+        let dh = (h as f64 * factor).round();
         let blobs = std::mem::take(&mut self.blobs);
         let r = (|| {
             let doc = self.doc_mut();
             doc.begin_txn("Import image");
             let mut params = BTreeMap::new();
             params.insert("name".into(), Value::Str(name.to_string()));
-            params.insert("x".into(), Value::F64((center.x - w as f64 / 2.0).round()));
-            params.insert("y".into(), Value::F64((center.y - h as f64 / 2.0).round()));
-            params.insert("w".into(), Value::F64(w as f64));
-            params.insert("h".into(), Value::F64(h as f64));
+            params.insert("x".into(), Value::F64((center.x - dw / 2.0).round()));
+            params.insert("y".into(), Value::F64((center.y - dh / 2.0).round()));
+            params.insert("w".into(), Value::F64(dw));
+            params.insert("h".into(), Value::F64(dh));
             let id = doc.create_node(NodeKind::Bitmap, parent, params, &blobs)?;
             if let Some(n) = doc.nodes.get_mut(&id) {
                 n.bitmap = Some(ed_document::BitmapData::from_rgba(w, h, &rgba));
@@ -1053,18 +1121,26 @@ impl Session {
         r
     }
 
-    /// Deterministic export (spec §9): artboard by index, scale, format.
-    pub fn export(&mut self, artboard_index: usize, scale: f64, format: &str) -> Result<Vec<u8>, String> {
+    /// Deterministic export (spec §9): artboard by index, scale, format,
+    /// with/without the artboard background, JPEG quality.
+    pub fn export(
+        &mut self,
+        artboard_index: usize,
+        scale: f64,
+        format: &str,
+        background: bool,
+        quality: u8,
+    ) -> Result<Vec<u8>, String> {
         let abs = self.doc().artboards();
         let &ab = abs.get(artboard_index).ok_or("no such artboard")?;
         let doc = &self.docs[self.active].doc;
         let pm = self
             .engine
-            .render_artboard(doc, &self.blobs, ab, scale.clamp(0.05, 16.0), true)
+            .render_artboard(doc, &self.blobs, ab, scale.clamp(0.05, 16.0), background)
             .ok_or("render failed")?;
         let rgba = demultiply(&pm);
         match format {
-            "jpeg" => ed_io::encode_jpeg(pm.width(), pm.height(), &rgba, 90),
+            "jpeg" => ed_io::encode_jpeg(pm.width(), pm.height(), &rgba, quality.clamp(1, 100)),
             "webp" => ed_io::encode_webp(pm.width(), pm.height(), &rgba),
             _ => ed_io::encode_png(pm.width(), pm.height(), &rgba),
         }
@@ -1081,7 +1157,7 @@ impl Session {
         }
         let ids = self.doc().selected_nodes.clone();
         if ids.is_empty() {
-            return self.export(0, 1.0, "png");
+            return self.export(0, 1.0, "png", true, 90);
         }
         let bounds = self.selection_bounds();
         let mut pm = tiny_skia::Pixmap::new(bounds.w.ceil().max(1.0) as u32, bounds.h.ceil().max(1.0) as u32)
@@ -1179,11 +1255,16 @@ impl Session {
             "palette": doc.palette,
             "variables": doc.variables,
             "hasPixelSelection": doc.pixel_selection.as_ref().map(|s| !s.is_empty()).unwrap_or(false),
-            "artboards": doc.artboards().iter().enumerate().map(|(i, id)| json!({
-                "index": i,
-                "id": id.to_string(),
-                "name": doc.node(*id).map(|n| n.name().to_string()).unwrap_or_default(),
-            })).collect::<Vec<_>>(),
+            "artboards": doc.artboards().iter().enumerate().map(|(i, id)| {
+                let r = doc.artboard_rect(*id).unwrap_or_default();
+                json!({
+                    "index": i,
+                    "id": id.to_string(),
+                    "name": doc.node(*id).map(|n| n.name().to_string()).unwrap_or_default(),
+                    "w": r.w,
+                    "h": r.h,
+                })
+            }).collect::<Vec<_>>(),
             "status": {
                 "cursorX": self.pointer_doc.x,
                 "cursorY": self.pointer_doc.y,
@@ -1352,7 +1433,14 @@ enum Command {
     SetToolParam { key: String, value: Value },
     SetFg { color: String },
     SetBg { color: String },
-    NewDoc { width: f64, height: f64 },
+    NewDoc {
+        width: f64,
+        height: f64,
+        name: Option<String>,
+        background: Option<String>,
+        bg_color: Option<String>,
+        dpi: Option<f64>,
+    },
     SwitchDoc { index: usize },
     CloseDoc { index: usize },
     RenameDoc { name: String },

@@ -25,9 +25,11 @@ const ADJUSTMENTS = MODIFIER_GROUPS.find((g) => g.group === 'Adjustments')!.item
 export default function MenuBar({
   onNewDoc,
   onExport,
+  onImport,
 }: {
   onNewDoc: () => void
   onExport: () => void
+  onImport: (p: import('./dialogs').PendingImport) => void
 }) {
   const state = useEditorState()
   const sel = state.selection[0]
@@ -75,7 +77,17 @@ export default function MenuBar({
           <MenubarSeparator />
           <MenubarItem
             onClick={() =>
-              openFile('image/*', (b, n) => core.importImage(b, n))
+              openFile('image/*', (bytes, name) => {
+                const url = URL.createObjectURL(new Blob([bytes]))
+                const img = new Image()
+                img.onload = () =>
+                  onImport({ bytes, name, url, width: img.naturalWidth, height: img.naturalHeight })
+                img.onerror = () => {
+                  URL.revokeObjectURL(url)
+                  core.importImage(bytes, name)
+                }
+                img.src = url
+              })
             }
           >
             Import Image…
@@ -183,7 +195,7 @@ export default function MenuBar({
             </MenubarSubContent>
           </MenubarSub>
           <MenubarSeparator />
-          <MenubarItem onClick={() => core.cmd({ cmd: 'new-artboard', width: 800, height: 600 })}>
+          <MenubarItem onClick={() => core.cmd({ cmd: 'new-artboard', width: 4000, height: 3000 })}>
             New Artboard
           </MenubarItem>
         </MenubarContent>

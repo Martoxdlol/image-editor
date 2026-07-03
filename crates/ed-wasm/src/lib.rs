@@ -52,16 +52,24 @@ impl EditorSession {
 
     // ---------------------------------------------------------- binary io
 
-    pub fn import_image(&mut self, bytes: &[u8], name: &str) -> String {
-        match self.session.import_image(bytes, name) {
+    /// `scale` < 0 fits the artboard; `new_doc` opens as its own document.
+    pub fn import_image(&mut self, bytes: &[u8], name: &str, scale: f64, new_doc: bool) -> String {
+        match self.session.import_image(bytes, name, scale, new_doc) {
             Ok(()) => "{\"ok\":true}".into(),
             Err(e) => serde_json::json!({ "ok": false, "error": e }).to_string(),
         }
     }
 
-    /// Export an artboard; empty vec on failure (use `last_error`).
-    pub fn export_artboard(&mut self, artboard: usize, scale: f64, format: &str) -> Vec<u8> {
-        self.session.export(artboard, scale, format).unwrap_or_default()
+    /// Export an artboard; empty vec on failure.
+    pub fn export_artboard(
+        &mut self,
+        artboard: usize,
+        scale: f64,
+        format: &str,
+        background: bool,
+        quality: u8,
+    ) -> Vec<u8> {
+        self.session.export(artboard, scale, format, background, quality).unwrap_or_default()
     }
 
     /// PNG flavor for system-clipboard copy (spec §10.7).

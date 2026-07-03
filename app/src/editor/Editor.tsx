@@ -14,21 +14,23 @@ import ColorPanel from './panels/ColorPanel'
 import HistoryPanel from './panels/HistoryPanel'
 import LayersPanel from './panels/LayersPanel'
 import PropertiesPanel from './panels/PropertiesPanel'
-import { NewDocDialog, ExportDialog } from './dialogs'
+import { NewDocDialog, ExportDialog, ImportDialog, type PendingImport } from './dialogs'
 import { useShortcuts } from './useShortcuts'
 
 export default function Editor() {
   const [newDocOpen, setNewDocOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
+  const [pendingImport, setPendingImport] = useState<PendingImport | null>(null)
 
   const newDoc = useCallback(() => setNewDocOpen(true), [])
   const exportDlg = useCallback(() => setExportOpen(true), [])
+  const importDlg = useCallback((p: PendingImport) => setPendingImport(p), [])
   useShortcuts({ newDoc, exportDlg })
 
   return (
     <TooltipProvider>
       <div className="flex h-screen w-screen flex-col overflow-hidden bg-background text-foreground">
-        <MenuBar onNewDoc={newDoc} onExport={exportDlg} />
+        <MenuBar onNewDoc={newDoc} onExport={exportDlg} onImport={importDlg} />
         <DocTabs onNewDoc={newDoc} />
         <ToolOptions />
         <div className="flex min-h-0 flex-1">
@@ -45,6 +47,7 @@ export default function Editor() {
       </div>
       <NewDocDialog open={newDocOpen} onClose={() => setNewDocOpen(false)} />
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
+      <ImportDialog pending={pendingImport} onClose={() => setPendingImport(null)} />
     </TooltipProvider>
   )
 }

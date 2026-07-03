@@ -86,7 +86,9 @@ self.onmessage = async (e: MessageEvent) => {
     }
     case 'import-image': {
       if (!session) return
-      const r = JSON.parse(session.import_image(new Uint8Array(msg.bytes), msg.name))
+      const r = JSON.parse(
+        session.import_image(new Uint8Array(msg.bytes), msg.name, msg.scale ?? 1, msg.newDoc ?? false),
+      )
       if (r.ok === false) {
         ;(self as unknown as Worker).postMessage({ type: 'error', error: r.error })
       }
@@ -105,7 +107,13 @@ self.onmessage = async (e: MessageEvent) => {
     }
     case 'export': {
       if (!session) return
-      const bytes = session.export_artboard(msg.artboard ?? 0, msg.scale ?? 1, msg.format ?? 'png')
+      const bytes = session.export_artboard(
+        msg.artboard ?? 0,
+        msg.scale ?? 1,
+        msg.format ?? 'png',
+        msg.background ?? true,
+        msg.quality ?? 90,
+      )
       ;(self as unknown as Worker).postMessage(
         { type: 'result', id: msg.id, bytes: bytes.buffer, name: msg.name },
         { transfer: [bytes.buffer] },

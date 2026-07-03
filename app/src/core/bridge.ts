@@ -70,8 +70,15 @@ class CoreBridge {
     this.worker?.postMessage({ type: 'resize', width, height })
   }
 
-  importImage(bytes: ArrayBuffer, name: string): void {
-    this.worker?.postMessage({ type: 'import-image', bytes, name }, [bytes])
+  importImage(
+    bytes: ArrayBuffer,
+    name: string,
+    opts: { scale?: number; newDoc?: boolean } = {},
+  ): void {
+    this.worker?.postMessage(
+      { type: 'import-image', bytes, name, scale: opts.scale ?? 1, newDoc: opts.newDoc ?? false },
+      [bytes],
+    )
   }
 
   openMyed(bytes: ArrayBuffer, name: string): void {
@@ -86,8 +93,20 @@ class CoreBridge {
     })
   }
 
-  exportArtboard(artboard: number, scale: number, format: string): Promise<ArrayBuffer> {
-    return this.request({ type: 'export', artboard, scale, format })
+  exportArtboard(
+    artboard: number,
+    scale: number,
+    format: string,
+    opts: { background?: boolean; quality?: number } = {},
+  ): Promise<ArrayBuffer> {
+    return this.request({
+      type: 'export',
+      artboard,
+      scale,
+      format,
+      background: opts.background ?? true,
+      quality: opts.quality ?? 90,
+    })
   }
 
   copyAsPng(): Promise<ArrayBuffer> {

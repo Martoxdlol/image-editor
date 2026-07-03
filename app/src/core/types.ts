@@ -102,7 +102,7 @@ export interface EditorState {
   palette: PaletteEntry[]
   variables: Record<string, ParamValue>
   hasPixelSelection: boolean
-  artboards: { index: number; id: string; name: string }[]
+  artboards: { index: number; id: string; name: string; w: number; h: number }[]
   status: { cursorX: number; cursorY: number; cursor: string; nodesRendered: number }
   clipboardFull: boolean
 }
