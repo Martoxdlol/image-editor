@@ -49,6 +49,7 @@ export default function CanvasView() {
   const startedRef = useRef(false)
   const state = useEditorState()
 
+  // one-time worker start (the canvas can only transfer control once)
   useEffect(() => {
     const canvas = canvasRef.current
     const holder = holderRef.current
@@ -60,14 +61,25 @@ export default function CanvasView() {
     canvas.style.width = `${rect.width}px`
     canvas.style.height = `${rect.height}px`
     core.start(canvas, w, h)
+  }, [])
 
-    const ro = new ResizeObserver(() => {
+  // keep the canvas sized to its holder — separate effect so it survives
+  // StrictMode's mount→unmount→remount (the start effect early-returns on
+  // the second pass and must not take the observer down with it)
+  useEffect(() => {
+    const canvas = canvasRef.current
+    const holder = holderRef.current
+    if (!canvas || !holder) return
+    const apply = () => {
       const r = holder.getBoundingClientRect()
+      if (r.width < 1 || r.height < 1) return
       canvas.style.width = `${r.width}px`
       canvas.style.height = `${r.height}px`
       core.resize(Math.max(64, Math.round(r.width * DPR)), Math.max(64, Math.round(r.height * DPR)))
-    })
+    }
+    const ro = new ResizeObserver(apply)
     ro.observe(holder)
+    apply()
     return () => ro.disconnect()
   }, [])
 
