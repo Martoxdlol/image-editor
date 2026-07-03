@@ -680,14 +680,38 @@ impl Session {
         }
     }
 
-    /// Edit-Fill for the active selection: paint the selected region onto
-    /// the paint target (clicked/selected bitmap, or a fresh paint layer).
+    /// Bucket fill with an active selection over any content: flood the
+    /// rendered COMPOSITE from the click (spec §6.1 "sample composite") so
+    /// the visible region under the cursor fills — not the whole selection
+    /// — then paint it, clipped by the selection, onto the paint target.
     fn fill_selection_region(&mut self, p: Vec2, color: ed_core::Color) {
+        let wand = self.composite_wand_region(p);
         let Some((node, offset, scale)) = self.paint_target(p) else { return };
-        let Some(mask) = self.fill_constraint_mask(node, offset, scale) else {
+        let Some(mut mask) = self.fill_constraint_mask(node, offset, scale) else {
             self.doc_mut().commit_txn(); // paint_target may have opened one
             return;
         };
+        // intersect the selection constraint with the composite region
+        if let Some((wr, ww, wh, wdata)) = &wand {
+            for y in 0..mask.h {
+                for x in 0..mask.w {
+                    let i = (y * mask.w + x) as usize;
+                    if mask.data[i] == 0 {
+                        continue;
+                    }
+                    let dx = offset.x + (x as f64 + 0.5) * scale.x;
+                    let dy = offset.y + (y as f64 + 0.5) * scale.y;
+                    let ix = (dx - wr.x).floor() as i64;
+                    let iy = (dy - wr.y).floor() as i64;
+                    let v = if ix < 0 || iy < 0 || ix >= *ww as i64 || iy >= *wh as i64 {
+                        0
+                    } else {
+                        wdata[(iy as usize) * (*ww as usize) + ix as usize]
+                    };
+                    mask.data[i] = ((mask.data[i] as u32 * v as u32) / 255) as u8;
+                }
+            }
+        }
         // before-capture the tiles the selection region can touch
         let sb = match self.doc().pixel_selection.as_ref().map(|s| s.bounds()) {
             Some(b) => b,
@@ -724,6 +748,24 @@ impl Session {
         }
         self.blobs = blobs;
         self.dirty_frame();
+    }
+
+    /// Wand the rendered composite of the artboard under `p` from the
+    /// click point, using the fill tool's tolerance/contiguous settings.
+    /// Returns (artboard rect, w, h, coverage) in artboard-local pixels.
+    fn composite_wand_region(&mut self, p: Vec2) -> Option<(Rect, u32, u32, Vec<u8>)> {
+        let ab = self.engine.artboard_at(self.doc(), p)?;
+        let rect = self.doc().artboard_rect(ab)?;
+        let doc = &self.docs[self.active].doc;
+        let pm = self.engine.render_artboard(doc, &self.blobs, ab, 1.0, true)?;
+        let rgba = crate::session::demultiply(&pm);
+        let sx = (p.x - rect.x).floor().max(0.0) as u32;
+        let sy = (p.y - rect.y).floor().max(0.0) as u32;
+        let tolerance = self.tool_f64("fill.tolerance", 0.1);
+        let contiguous = self.tool_bool("fill.contiguous", true);
+        let mask =
+            raster::magic_wand(&rgba, pm.width(), pm.height(), (sx, sy), tolerance, contiguous);
+        Some((rect, pm.width(), pm.height(), mask))
     }
 
     fn build_sel_mask(&self, offset: Vec2, scale: Vec2, node: NodeId) -> Option<SelMask> {
