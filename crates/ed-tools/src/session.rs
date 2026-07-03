@@ -548,6 +548,14 @@ impl Session {
                 self.rasterize_selection()?;
                 Ok(json!(null))
             }
+            CropToSelection => {
+                self.crop_to_selection()?;
+                Ok(json!(null))
+            }
+            ResetCrop => {
+                self.reset_crop()?;
+                Ok(json!(null))
+            }
             ConvertToPath => {
                 self.convert_to_path()?;
                 Ok(json!(null))
@@ -809,6 +817,158 @@ impl Session {
         r
     }
 
+    /// Office-style crop-in-place: shrink the visible window of selected
+    /// bitmaps to the active pixel selection. The pixels outside stay in
+    /// the document — Reset Crop brings them back exactly.
+    pub fn crop_to_selection(&mut self) -> Result<(), String> {
+        let Some(sel) = self.doc().pixel_selection.clone() else { return Ok(()) };
+        if sel.is_empty() {
+            return Ok(());
+        }
+        let sb = sel.bounds();
+        // targets: selected bitmaps, else any bitmap under the selection
+        let mut targets: Vec<NodeId> = self
+            .doc()
+            .selected_nodes
+            .iter()
+            .copied()
+            .filter(|id| self.doc().node(*id).map(|n| n.kind == NodeKind::Bitmap).unwrap_or(false))
+            .collect();
+        if targets.is_empty() {
+            for &root in self.doc().children_of(None) {
+                let kids: Vec<NodeId> = if self
+                    .doc()
+                    .node(root)
+                    .map(|n| n.kind == NodeKind::Artboard)
+                    .unwrap_or(false)
+                {
+                    self.doc().children_of(Some(root)).to_vec()
+                } else {
+                    vec![root]
+                };
+                for id in kids {
+                    let Some(n) = self.doc().node(id) else { continue };
+                    if n.kind != NodeKind::Bitmap || !n.visible() || n.locked() {
+                        continue;
+                    }
+                    if self
+                        .engine
+                        .node_bounds(self.doc(), id)
+                        .map(|b| b.intersects(&sb))
+                        .unwrap_or(false)
+                    {
+                        targets.push(id);
+                    }
+                }
+            }
+        }
+        if targets.is_empty() {
+            return Ok(());
+        }
+        let blobs = std::mem::take(&mut self.blobs);
+        let r = (|| {
+            let mut cropped = Vec::new();
+            for id in targets {
+                let Some(bounds) = self.engine.node_bounds(self.doc(), id) else { continue };
+                // intersect the selection with the visible rect
+                let nx = sb.x.max(bounds.x);
+                let ny = sb.y.max(bounds.y);
+                let nx2 = (sb.x + sb.w).min(bounds.x + bounds.w);
+                let ny2 = (sb.y + sb.h).min(bounds.y + bounds.h);
+                if nx2 - nx < 1.0 || ny2 - ny < 1.0 {
+                    continue;
+                }
+                let (origin, scale) = crate::tools::bitmap_view(self.doc(), id);
+                // new crop window in natural pixels
+                let cx = ((nx - origin.x) / scale.x).floor().max(0.0);
+                let cy = ((ny - origin.y) / scale.y).floor().max(0.0);
+                let cw = ((nx2 - nx) / scale.x).round().max(1.0);
+                let ch = ((ny2 - ny) / scale.y).round().max(1.0);
+                let doc = self.doc_mut();
+                if doc.open_txn_label().is_none() {
+                    doc.begin_txn("Crop image");
+                }
+                for (path, v) in [
+                    ("crop-x", cx),
+                    ("crop-y", cy),
+                    ("crop-w", cw),
+                    ("crop-h", ch),
+                    ("x", nx),
+                    ("y", ny),
+                    ("w", nx2 - nx),
+                    ("h", ny2 - ny),
+                ] {
+                    doc.apply(
+                        OpKind::ParamSet {
+                            node_id: id,
+                            path: path.into(),
+                            value: Value::F64(v),
+                            prev: None,
+                        },
+                        &blobs,
+                    )?;
+                }
+                cropped.push(id);
+            }
+            let doc = self.doc_mut();
+            doc.commit_txn();
+            if !cropped.is_empty() {
+                doc.selected_nodes = cropped;
+                doc.pixel_selection = None;
+            }
+            Ok(())
+        })();
+        self.blobs = blobs;
+        self.dirty_frame();
+        r
+    }
+
+    /// Undo a crop-in-place: the full image returns at its original spot.
+    pub fn reset_crop(&mut self) -> Result<(), String> {
+        let ids = self.doc().selected_nodes.clone();
+        let blobs = std::mem::take(&mut self.blobs);
+        let r = (|| {
+            for id in ids {
+                let Some(n) = self.doc().node(id) else { continue };
+                if n.kind != NodeKind::Bitmap || n.get_param("crop-w").is_none() {
+                    continue;
+                }
+                let Some(bm) = &n.bitmap else { continue };
+                let (nat_w, nat_h) = (bm.width as f64, bm.height as f64);
+                let (origin, scale) = crate::tools::bitmap_view(self.doc(), id);
+                let doc = self.doc_mut();
+                if doc.open_txn_label().is_none() {
+                    doc.begin_txn("Reset crop");
+                }
+                for (path, v) in [
+                    ("crop-x", 0.0),
+                    ("crop-y", 0.0),
+                    ("crop-w", nat_w),
+                    ("crop-h", nat_h),
+                    ("x", origin.x),
+                    ("y", origin.y),
+                    ("w", nat_w * scale.x),
+                    ("h", nat_h * scale.y),
+                ] {
+                    doc.apply(
+                        OpKind::ParamSet {
+                            node_id: id,
+                            path: path.into(),
+                            value: Value::F64(v),
+                            prev: None,
+                        },
+                        &blobs,
+                    )?;
+                }
+            }
+            self.doc_mut().commit_txn();
+            Ok(())
+        })();
+        self.blobs = blobs;
+        self.dirty_frame();
+        r
+    }
+
     /// Shape→Path / Text→Path conversion (spec §2.4, scoped to shapes).
     pub fn convert_to_path(&mut self) -> Result<(), String> {
         let ids = self.doc().selected_nodes.clone();
@@ -972,7 +1132,13 @@ impl Session {
         self.viewport = (width, height);
         let DocState { doc, view } = &mut self.docs[self.active];
         view.ants_phase = ants_phase;
-        let selected = doc.selected_nodes.clone();
+        // outlines are Select-tool feedback; with other tools active they
+        // read as a stray border around the object
+        let selected = if self.tool == ToolKind::Select {
+            doc.selected_nodes.clone()
+        } else {
+            Vec::new()
+        };
         let pm = self.engine.render(doc, &self.blobs, view, width, height, &self.overlays, &selected);
         self.last_state_rev = self.frame_rev;
         demultiply(&pm)
@@ -1222,4 +1388,6 @@ enum Command {
     ConvertToPath,
     SelectAt { x: f64, y: f64 },
     HistoryJump { id: u64 },
+    CropToSelection,
+    ResetCrop,
 }

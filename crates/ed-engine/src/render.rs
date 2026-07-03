@@ -46,7 +46,8 @@ pub fn to_transform(m: &Mat3) -> Transform {
 }
 
 pub struct Engine {
-    bitmap_cache: HashMap<NodeId, (u64, Pixmap)>,
+    /// keyed by content rev + crop window (crop-in-place, Office-style)
+    bitmap_cache: HashMap<NodeId, (u64, (u32, u32, u32, u32), Pixmap)>,
     strokes_cache: HashMap<NodeId, (BlobHash, Vec2, Pixmap)>,
     checker: Pixmap,
     /// Perf HUD counters (spec §14).
@@ -460,18 +461,24 @@ impl Engine {
             NodeKind::Bitmap => {
                 let Some(bm) = &node.bitmap else { return };
                 let rev = bm.rev;
+                let crop = bitmap_crop(doc, node, bm);
                 let cached = self.bitmap_cache.get(&node.id);
-                if cached.map(|(r, _)| *r != rev).unwrap_or(true) {
-                    if let Some(pm) = bitmap_to_pixmap(bm) {
-                        self.bitmap_cache.insert(node.id, (rev, pm));
+                if cached.map(|(r, c, _)| *r != rev || *c != crop).unwrap_or(true) {
+                    let Some(full) = bitmap_to_pixmap(bm) else { return };
+                    let pm = if crop == (0, 0, bm.width, bm.height) {
+                        full
                     } else {
-                        return;
-                    }
+                        match crop_pixmap(&full, crop) {
+                            Some(pm) => pm,
+                            None => return,
+                        }
+                    };
+                    self.bitmap_cache.insert(node.id, (rev, crop, pm));
                 }
-                let (_, pm) = &self.bitmap_cache[&node.id];
+                let (_, _, pm) = &self.bitmap_cache[&node.id];
                 let x = doc.param_f64(node, "x", 0.0);
                 let y = doc.param_f64(node, "y", 0.0);
-                // non-destructive resize: w/h params scale the natural size
+                // non-destructive resize: w/h params scale the crop window
                 let (nw, nh) = (pm.width() as f64, pm.height() as f64);
                 let sx = doc.param_f64(node, "w", nw) / nw.max(1.0);
                 let sy = doc.param_f64(node, "h", nh) / nh.max(1.0);
@@ -609,11 +616,12 @@ impl Engine {
             }
             NodeKind::Bitmap => {
                 let bm = node.bitmap.as_ref()?;
+                let (_, _, cw, ch) = bitmap_crop(doc, node, bm);
                 Some(Rect::new(
                     doc.param_f64(node, "x", 0.0),
                     doc.param_f64(node, "y", 0.0),
-                    doc.param_f64(node, "w", bm.width as f64),
-                    doc.param_f64(node, "h", bm.height as f64),
+                    doc.param_f64(node, "w", cw as f64),
+                    doc.param_f64(node, "h", ch as f64),
                 ))
             }
             NodeKind::StrokeSet => strokes_bounds(node),
@@ -803,6 +811,35 @@ impl Engine {
 }
 
 // ---------------------------------------------------------------- helpers
+
+/// The crop window of a bitmap node in natural pixels (crop-in-place,
+/// like Office image cropping: pixels outside stay in the document).
+pub fn bitmap_crop(
+    doc: &Document,
+    node: &Node,
+    bm: &BitmapData,
+) -> (u32, u32, u32, u32) {
+    let cx = doc.param_f64(node, "crop-x", 0.0).clamp(0.0, bm.width as f64) as u32;
+    let cy = doc.param_f64(node, "crop-y", 0.0).clamp(0.0, bm.height as f64) as u32;
+    let cw = doc.param_f64(node, "crop-w", bm.width as f64).max(1.0) as u32;
+    let ch = doc.param_f64(node, "crop-h", bm.height as f64).max(1.0) as u32;
+    (cx, cy, cw.min(bm.width - cx), ch.min(bm.height - cy))
+}
+
+fn crop_pixmap(full: &Pixmap, (cx, cy, cw, ch): (u32, u32, u32, u32)) -> Option<Pixmap> {
+    let mut out = Pixmap::new(cw.max(1), ch.max(1))?;
+    let src = full.data();
+    let dst = out.data_mut();
+    let fw = full.width() as usize;
+    for row in 0..ch as usize {
+        let sy = cy as usize + row;
+        let so = (sy * fw + cx as usize) * 4;
+        let d = row * cw as usize * 4;
+        let n = cw as usize * 4;
+        dst[d..d + n].copy_from_slice(&src[so..so + n]);
+    }
+    Some(out)
+}
 
 /// Compose all enabled transform modifiers of a node (spec §2.2).
 pub fn modifier_matrix(doc: &Document, node: &Node) -> Mat3 {

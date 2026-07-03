@@ -173,6 +173,19 @@ export default function MenuBar({
             Convert Shape → Path
           </MenubarItem>
           <MenubarSeparator />
+          <MenubarItem
+            disabled={!state.hasPixelSelection}
+            onClick={() => core.cmd({ cmd: 'crop-to-selection' })}
+          >
+            Crop Image to Selection
+          </MenubarItem>
+          <MenubarItem
+            disabled={!state.props.some((p) => p.kind === 'bitmap' && p.params['crop-w'] !== undefined)}
+            onClick={() => core.cmd({ cmd: 'reset-crop' })}
+          >
+            Reset Image Crop
+          </MenubarItem>
+          <MenubarSeparator />
           <MenubarSub>
             <MenubarSubTrigger disabled={!sel}>Add Modifier</MenubarSubTrigger>
             <MenubarSubContent>

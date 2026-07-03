@@ -262,14 +262,12 @@ fn clear_bitmap_region(
     bounds: &Rect,
     blobs: &mut ed_document::BlobStore,
 ) {
-    let offset = doc.node_position(id);
+    let (offset, scale) = crate::tools::bitmap_view(doc, id);
+    let (sx, sy) = (scale.x, scale.y);
     let Some(n) = doc.node(id) else { return };
     let Some(bm) = n.bitmap.as_ref() else { return };
     let bw = bm.width;
     let bh = bm.height;
-    // display scale (non-destructive w/h resize)
-    let sx = doc.param_f64(n, "w", bw as f64) / (bw as f64).max(1.0);
-    let sy = doc.param_f64(n, "h", bh as f64) / (bh as f64).max(1.0);
     // intersect region in bitmap-local pixels
     let x0 = (((bounds.x - offset.x) / sx).floor().max(0.0)) as u32;
     let y0 = (((bounds.y - offset.y) / sy).floor().max(0.0)) as u32;

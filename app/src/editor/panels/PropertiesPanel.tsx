@@ -176,6 +176,26 @@ function NodeProps({ props }: { props: PropsMirror }) {
         )}
       </div>
 
+      {/* crop-in-place window (bitmaps): original pixels are kept */}
+      {props.kind === 'bitmap' && p['crop-w'] !== undefined && (
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] uppercase text-muted-foreground">Crop (px)</span>
+            <button
+              className="rounded px-1 text-[10px] text-primary hover:bg-accent"
+              onClick={() => core.cmd({ cmd: 'reset-crop' })}
+            >
+              reset
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-1.5">
+            {(['crop-x', 'crop-y', 'crop-w', 'crop-h'] as const).map((k) => (
+              <NumField key={k} node={id} path={k} value={p[k]} label={k.slice(5)} />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* shape-specific */}
       {props.kind === 'shape' && (
         <div className="grid grid-cols-2 gap-1.5">

@@ -565,21 +565,13 @@ impl Session {
     /// destructive within a Bitmap node; "paint as strokes" records a
     /// StrokeSet instead.
     fn paint_target(&mut self, p: Vec2) -> Option<(NodeId, Vec2, Vec2)> {
-        fn bitmap_scale(doc: &ed_document::Document, id: NodeId) -> Vec2 {
-            let Some(n) = doc.node(id) else { return Vec2::new(1.0, 1.0) };
-            let Some(bm) = &n.bitmap else { return Vec2::new(1.0, 1.0) };
-            Vec2::new(
-                doc.param_f64(n, "w", bm.width as f64) / (bm.width as f64).max(1.0),
-                doc.param_f64(n, "h", bm.height as f64) / (bm.height as f64).max(1.0),
-            )
-        }
         // selected bitmap?
         let sel = self.doc().selected_nodes.clone();
         for id in sel {
             if let Some(n) = self.doc().node(id) {
                 if n.kind == NodeKind::Bitmap && n.visible() && !n.locked() {
-                    let off = self.doc().node_position(id);
-                    return Some((id, off, bitmap_scale(self.doc(), id)));
+                    let (off, scale) = bitmap_view(self.doc(), id);
+                    return Some((id, off, scale));
                 }
             }
         }
@@ -587,8 +579,8 @@ impl Session {
         if let Some(id) = self.engine.hit_test(self.doc(), p, true) {
             if let Some(n) = self.doc().node(id) {
                 if n.kind == NodeKind::Bitmap {
-                    let off = self.doc().node_position(id);
-                    return Some((id, off, bitmap_scale(self.doc(), id)));
+                    let (off, scale) = bitmap_view(self.doc(), id);
+                    return Some((id, off, scale));
                 }
             }
         }
@@ -753,15 +745,7 @@ impl Session {
         let hit = self.engine.hit_test(self.doc(), p, true);
         match hit.and_then(|id| self.doc().node(id).map(|n| (id, n.kind))) {
             Some((id, NodeKind::Bitmap)) => {
-                let offset = self.doc().node_position(id);
-                let scale = {
-                    let n = self.doc().node(id).unwrap();
-                    let bm = n.bitmap.as_ref().unwrap();
-                    Vec2::new(
-                        self.doc().param_f64(n, "w", bm.width as f64) / (bm.width as f64).max(1.0),
-                        self.doc().param_f64(n, "h", bm.height as f64) / (bm.height as f64).max(1.0),
-                    )
-                };
+                let (offset, scale) = bitmap_view(self.doc(), id);
                 let local = Vec2::new((p.x - offset.x) / scale.x, (p.y - offset.y) / scale.y);
                 let mask = self.build_sel_mask(offset, scale, id);
                 let rgba = color.to_srgb8();
@@ -1576,6 +1560,20 @@ impl Session {
         }
         self.blobs = blobs;
     }
+}
+
+/// Doc↔bitmap-pixel mapping for a bitmap node with non-destructive scale
+/// (w/h params) and crop-in-place (crop-* params): returns the effective
+/// origin (doc position of natural pixel 0,0) and per-axis scale, so that
+/// `pixel = (doc − origin) / scale`.
+pub fn bitmap_view(doc: &ed_document::Document, id: NodeId) -> (Vec2, Vec2) {
+    let Some(n) = doc.node(id) else { return (Vec2::ZERO, Vec2::new(1.0, 1.0)) };
+    let Some(bm) = &n.bitmap else { return (doc.node_position(id), Vec2::new(1.0, 1.0)) };
+    let (cx, cy, cw, ch) = ed_engine::render::bitmap_crop(doc, n, bm);
+    let sx = doc.param_f64(n, "w", cw as f64) / (cw as f64).max(1.0);
+    let sy = doc.param_f64(n, "h", ch as f64) / (ch as f64).max(1.0);
+    let pos = doc.node_position(id);
+    (Vec2::new(pos.x - cx as f64 * sx, pos.y - cy as f64 * sy), Vec2::new(sx, sy))
 }
 
 fn capitalize(s: &str) -> String {

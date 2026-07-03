@@ -256,6 +256,18 @@ export default function CanvasView() {
         <ContextMenuItem disabled={!hasSel} onClick={() => core.cmd({ cmd: 'rasterize-selection' })}>
           Rasterize
         </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!state.hasPixelSelection}
+          onClick={() => core.cmd({ cmd: 'crop-to-selection' })}
+        >
+          Crop Image to Selection
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!state.props.some((p) => p.kind === 'bitmap' && p.params['crop-w'] !== undefined)}
+          onClick={() => core.cmd({ cmd: 'reset-crop' })}
+        >
+          Reset Image Crop
+        </ContextMenuItem>
         <ContextMenuItem disabled={!hasSel} onClick={() => core.cmd({ cmd: 'convert-to-path' })}>
           Convert to Path
         </ContextMenuItem>

@@ -106,11 +106,12 @@ impl Engine {
             }
             NodeKind::Bitmap => {
                 let bm = node.bitmap.as_ref()?;
+                let (cx, cy, cw, ch) = crate::render::bitmap_crop(doc, node, bm);
                 let x = doc.param_f64(node, "x", 0.0);
                 let y = doc.param_f64(node, "y", 0.0);
-                let w = doc.param_f64(node, "w", bm.width as f64).max(1e-6);
-                let h = doc.param_f64(node, "h", bm.height as f64).max(1e-6);
-                // normalized position handles non-destructive w/h scaling
+                let w = doc.param_f64(node, "w", cw as f64).max(1e-6);
+                let h = doc.param_f64(node, "h", ch as f64).max(1e-6);
+                // normalized position handles crop + non-destructive scale
                 let u = (local.x - x) / w;
                 let v = (local.y - y) / h;
                 if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
@@ -118,8 +119,8 @@ impl Engine {
                 }
                 // hit only where paint exists — a transparent paint layer
                 // must not swallow clicks meant for nodes underneath
-                let px = ((u * bm.width as f64) as u32).min(bm.width - 1);
-                let py = ((v * bm.height as f64) as u32).min(bm.height - 1);
+                let px = (cx + (u * cw as f64) as u32).min(bm.width - 1);
+                let py = (cy + (v * ch as f64) as u32).min(bm.height - 1);
                 if bm.get_pixel(px, py)[3] < 8 {
                     return None;
                 }
