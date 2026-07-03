@@ -7,6 +7,7 @@ import { colorToHex, paramNumber } from '@/core/types'
 import { Plus, X } from 'lucide-react'
 import { useState } from 'react'
 import { useEditorState } from '../useEditorState'
+import Section from './Section'
 
 export default function ColorPanel() {
   const state = useEditorState()
@@ -31,9 +32,8 @@ export default function ColorPanel() {
   }
 
   return (
-    <div className="shrink-0 border-t">
-      <div className="panel-title px-2 py-1.5">Color</div>
-      <div className="flex items-center gap-3 px-2 pb-2">
+    <Section title="Color" grow={false}>
+      <div className="flex items-center gap-3 px-2 pb-2 pt-1">
         <div className="relative h-10 w-10">
           <input
             type="color"
@@ -133,6 +133,6 @@ export default function ColorPanel() {
           </button>
         </div>
       </div>
-    </div>
+    </Section>
   )
 }

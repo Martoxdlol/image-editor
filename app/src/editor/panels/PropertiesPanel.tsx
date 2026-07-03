@@ -23,6 +23,7 @@ import {
 import { ArrowDown, ArrowUp, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useEditorState } from '../useEditorState'
+import Section from './Section'
 
 const BLEND_MODES = [
   'normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge',
@@ -300,18 +301,19 @@ function NodeProps({ props }: { props: PropsMirror }) {
 export default function PropertiesPanel() {
   const state = useEditorState()
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t">
-      <div className="panel-title px-2 py-1.5">Properties</div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {state.props.length === 0 ? (
-          <div className="px-2 text-[11px] text-muted-foreground">
-            Nothing selected. Numeric fields accept <span className="num text-primary">=expressions</span> like{' '}
-            <span className="num">=$gridSize * 2</span>.
-          </div>
-        ) : (
-          state.props.map((p) => <NodeProps key={p.id} props={p} />)
-        )}
-      </div>
-    </div>
+    <Section title="Properties">
+      {state.props.length === 0 ? (
+        <div className="px-2 py-1 text-[11px] text-muted-foreground">
+          Nothing selected. Numeric fields accept <span className="num text-primary">=expressions</span> like{' '}
+          <span className="num">=$gridSize * 2</span>.
+        </div>
+      ) : (
+        <div className="pt-1">
+          {state.props.map((p) => (
+            <NodeProps key={p.id} props={p} />
+          ))}
+        </div>
+      )}
+    </Section>
   )
 }

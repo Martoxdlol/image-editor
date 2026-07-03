@@ -4,6 +4,7 @@
 import { Undo2 } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useEditorState } from '../useEditorState'
+import Section from './Section'
 
 export default function HistoryPanel() {
   const state = useEditorState()
@@ -14,12 +15,11 @@ export default function HistoryPanel() {
   }, [state.history.length])
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col border-t">
-      <div className="panel-title flex items-center justify-between px-2 py-1.5">
-        <span>History</span>
-        <span className="num text-[9px]">{state.history.length} txns</span>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto pb-1">
+    <Section
+      title="History"
+      right={<span className="num text-[9px] text-muted-foreground">{state.history.length} txns</span>}
+    >
+      <div className="pb-1">
         {state.history.map((h) => (
           <div
             key={h.id}
@@ -32,6 +32,6 @@ export default function HistoryPanel() {
         ))}
         <div ref={endRef} />
       </div>
-    </div>
+    </Section>
   )
 }
