@@ -58,9 +58,6 @@ export default function MenuBar({
 
   return (
     <Menubar className="h-8 rounded-none border-0 border-b bg-sidebar px-1">
-      <div className="num mr-1 select-none px-2 text-[13px] font-semibold tracking-tight text-primary">
-        ed<span className="text-muted-foreground">.</span>
-      </div>
       <MenubarMenu>
         <MenubarTrigger className="text-xs">File</MenubarTrigger>
         <MenubarContent>
@@ -254,11 +251,11 @@ export default function MenuBar({
           <MenubarItem
             onClick={() =>
               window.alert(
-                'ed — a non-destructive, tree-based image editor.\nRust core (wasm) + tiny-skia CPU renderer.\n\nEverything you see is evaluated from the document tree; nothing is baked.',
+                'A non-destructive, tree-based image editor.\nRust core (wasm) + tiny-skia CPU renderer.\n\nEverything you see is evaluated from the document tree; nothing is baked.',
               )
             }
           >
-            About ed
+            About
           </MenubarItem>
         </MenubarContent>
       </MenubarMenu>
