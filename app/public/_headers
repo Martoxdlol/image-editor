@@ -1,0 +1,6 @@
+# Cross-origin isolation so SharedArrayBuffer / wasm threads are available in
+# production, matching the dev & preview server headers in vite.config.ts.
+# Cloudflare Pages serves this file from the build output root.
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
