@@ -7,8 +7,12 @@ fallback paths the spec itself defines.
 ## Running it
 
 ```bash
-# web app (builds the wasm core on first run)
+# web app (builds the wasm core on first run if src/wasm-pkg is missing)
 cd app && pnpm install && pnpm dev
+
+# rebuild the wasm core after changing any Rust crate, then run the web build
+cd app && pnpm build:all        # == pnpm wasm && pnpm build
+cd app && pnpm wasm             # just rebuild + refresh the committed src/wasm-pkg
 
 # tests
 cargo test --workspace          # 51 tests: ops, undo, expressions, engine, io, clipboard
@@ -19,6 +23,20 @@ cargo run -p ed-cli -- validate project.myed
 cargo run -p ed-cli -- render project.myed --scale 2 -o out.png
 cargo run -p ed-cli -- export project.myed -o out/
 ```
+
+## Deploy (Cloudflare Pages)
+
+The prebuilt wasm core lives in `app/src/wasm-pkg/` and is committed, so the
+deploy build needs **no Rust toolchain** — it only installs JS deps and runs
+Vite. Configure the Pages project as:
+
+- **Root directory:** `app`
+- **Build command:** `pnpm build`  (pure `tsc -b && vite build`; never invokes wasm-pack)
+- **Build output directory:** `dist`
+- Package manager is auto-detected from `app/pnpm-lock.yaml` (pnpm).
+
+After changing any Rust crate, run `pnpm wasm` (or `pnpm build:all`) locally and
+commit the refreshed `app/src/wasm-pkg/` so the deployed core stays in sync.
 
 ## Architecture (spec §12) — as specced
 

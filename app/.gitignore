@@ -22,4 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-wasm-pkg/
+
+# The wasm core (src/wasm-pkg/) is prebuilt and committed so the Cloudflare
+# Pages build does not need a Rust toolchain. See src/wasm-pkg/.gitignore for
+# the exact tracked artifacts. Build locally with `pnpm wasm`.

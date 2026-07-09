@@ -1,0 +1,10 @@
+# wasm-pack regenerates this file as "*" on every `pnpm wasm`. We commit the
+# built package so Cloudflare Pages never needs Rust — whitelist the artifacts.
+# (Already-tracked files stay tracked even if a rebuild rewrites this to "*".)
+*
+!.gitignore
+!ed_wasm.js
+!ed_wasm.d.ts
+!ed_wasm_bg.wasm
+!ed_wasm_bg.wasm.d.ts
+!package.json
